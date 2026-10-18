@@ -17,6 +17,11 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+# Windows 콘솔·파이프의 기본 인코딩(cp1252 등)이 한글 출력에서 오류를 내지 않게 한다.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 
 def free_port():
     with socket.socket() as s:
@@ -52,11 +57,11 @@ def main():
         )
         init = subprocess.run(
             [str(server), "--config", str(config), "--init-admin", "admin", "--password-stdin"],
-            input="smoke-test-password-123\n", text=True, capture_output=True, timeout=60,
+            input="smoke-test-password-123\n", encoding="utf-8", errors="replace", capture_output=True, timeout=60,
         )
         if init.returncode != 0:
             raise SystemExit(f"관리자 만들기 실패: {init.stderr}")
-        proc = subprocess.Popen([str(server), "--config", str(config)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen([str(server), "--config", str(config)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, encoding="utf-8", errors="replace")
         try:
             deadline = time.time() + 20
             html = None

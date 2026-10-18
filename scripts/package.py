@@ -29,9 +29,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Windows 콘솔·파이프의 기본 인코딩(cp1252 등)이 한글 출력에서 오류를 내지 않게 한다.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 
 def run(cmd, **kw):
-    return subprocess.run(cmd, cwd=ROOT, check=True, text=True, capture_output=True, **kw).stdout
+    # 자식 프로세스의 출력은 UTF-8로 읽는다(Windows의 기본 코드 페이지로 읽으면 한글에서 실패한다).
+    return subprocess.run(
+        cmd, cwd=ROOT, check=True, capture_output=True, encoding="utf-8", errors="replace", **kw
+    ).stdout
 
 
 def workspace_version():
