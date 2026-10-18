@@ -17,6 +17,9 @@ repository = "https://github.com/autohitech/nuriscada"
 authors = ["NuriScada contributors"]
 publish = false
 
+[workspace.dependencies]
+tokio = { version = "1", default-features = false }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"

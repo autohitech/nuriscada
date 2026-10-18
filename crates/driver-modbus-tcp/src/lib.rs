@@ -3,17 +3,12 @@
 
 //! MODBUS TCP 마스터 드라이버.
 //!
-//! 이 크레이트는 첫 수직 조각(설계 0001)의 골격이다. 구현은 해당 단계(S1~S3)에서 채운다.
+//! 프레임 부호화·해석은 [`protocol`]의 순수 함수이고, 네트워크 입출력은 [`client`]에 있다.
 
-/// 크레이트 이름. 골격이 빌드되는지 확인하는 용도다.
-pub const CRATE_NAME: &str = "nuriscada-driver-modbus-tcp";
+pub mod client;
+pub mod protocol;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn crate_name_is_stable() {
-        assert_eq!(CRATE_NAME, "nuriscada-driver-modbus-tcp");
-    }
-}
+pub use client::{
+    ModbusTcpClient, SPACE_COILS, SPACE_DISCRETE_INPUTS, SPACE_HOLDING_REGISTERS,
+    SPACE_INPUT_REGISTERS,
+};
