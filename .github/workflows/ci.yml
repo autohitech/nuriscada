@@ -57,39 +57,36 @@ jobs:
       - name: 의존성 라이선스 검사
         run: npm run licenses
 
+  # 풀 리퀘스트에서는 비용이 작은 Linux에서만 짧게 측정한다.
+  # 세 OS 전체 측정은 매일 밤 `nightly.yml`이 한다(macOS·Windows는 사용 시간 배수가 커서 PR마다 돌리지 않는다).
   load:
-    name: 부하 측정 (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    name: 부하 측정 (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: 측정 도구 빌드
         id: load_build
         run: cargo build --locked --release -p nuriscada-bench
-      - name: 태그 1만 개·클라이언트 50개·100 ms 측정
-        shell: bash
+      - name: 태그 1만 개·클라이언트 50개·100 ms 측정(30초)
         run: |
           set -o pipefail
-          cargo run --locked --release -p nuriscada-bench -- --tags 10000 --clients 50 --devices 10 --scan-ms 100 --change-pct 10 --duration-s 60 --check --json | tee load.json
+          cargo run --locked --release -p nuriscada-bench -- --tags 10000 --clients 50 --devices 10 --scan-ms 100 --change-pct 10 --duration-s 30 --check --json | tee load.json
       - name: 측정 결과 보관
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: load-${{ matrix.os }}
+          name: load-ubuntu-latest
           path: load.json
           if-no-files-found: warn
-      - name: 장기 시험 기록 도구 점검 (Linux·macOS)
-        if: always() && runner.os != 'Windows' && steps.load_build.outcome == 'success'
+      - name: 장기 시험 기록 도구 점검
+        if: always() && steps.load_build.outcome == 'success'
         run: python3 scripts/soak.py --duration-s 10 --sample-s 2 --output soak-smoke
       - name: 장기 시험 도구 점검 기록 보관
-        if: always() && runner.os != 'Windows'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: soak-smoke-${{ matrix.os }}
+          name: soak-smoke-ubuntu-latest
           path: |
             soak-smoke/status.json
             soak-smoke/samples.jsonl
