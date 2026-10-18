@@ -307,11 +307,19 @@ async fn status(State(s): State<AppState>) -> Json<serde_json::Value> {
     }))
 }
 
-/// 스냅샷 프레임과 그 순번.
-fn snapshot_message(hub: &Hub) -> (Message, u64) {
-    let snap = hub.snapshot();
-    let seq = snap.seq;
-    (Message::Text(encode_snapshot(&snap).into()), seq)
+/// 큰 스냅샷을 복사·부호화하는 동안 비동기 스캔 작업을 막지 않는다.
+async fn snapshot_message(hub: &Arc<Hub>) -> Result<(Message, u64), tokio::task::JoinError> {
+    // 동시 접속이 몰려도 큰 스냅샷을 복사·부호화하는 작업 수를 제한한다.
+    static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+    let permit = SLOTS.acquire().await.expect("스냅샷 세마포어");
+    let hub = Arc::clone(hub);
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let snap = hub.snapshot();
+        let seq = snap.seq;
+        (Message::Text(encode_snapshot(&snap).into()), seq)
+    })
+    .await
 }
 
 async fn stream(ws: WebSocketUpgrade, State(s): State<AppState>) -> Response {
@@ -324,7 +332,9 @@ async fn stream(ws: WebSocketUpgrade, State(s): State<AppState>) -> Response {
 /// 그래서 연결 직후의 변경을 놓치지도, 오래된 값으로 되돌리지도 않는다.
 async fn push_updates(mut socket: WebSocket, hub: Arc<Hub>) {
     let mut rx = hub.subscribe_wire();
-    let (first, mut covered) = snapshot_message(&hub);
+    let Ok((first, mut covered)) = snapshot_message(&hub).await else {
+        return;
+    };
     if socket.send(first).await.is_err() {
         return;
     }
@@ -341,7 +351,9 @@ async fn push_updates(mut socket: WebSocket, hub: Arc<Hub>) {
                 }
                 // 너무 느려서 일부를 놓쳤다: 전체 스냅샷으로 다시 맞춘다.
                 Err(broadcast::error::RecvError::Lagged(_)) => {
-                    let (msg, seq) = snapshot_message(&hub);
+                    let Ok((msg, seq)) = snapshot_message(&hub).await else {
+                        return;
+                    };
                     covered = seq;
                     if socket.send(msg).await.is_err() {
                         return;
