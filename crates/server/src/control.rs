@@ -466,6 +466,9 @@ pub(super) struct ImportProjectRequest {
     mode: Option<String>,
     #[serde(default)]
     default_device: Option<String>,
+    /// `simple`(기본, NuriScada 가져오기 형식) 또는 `tagx`(기존 제품의 태그 파일).
+    #[serde(default)]
+    format: Option<String>,
 }
 
 pub(super) async fn import_project(
@@ -493,22 +496,44 @@ pub(super) async fn import_project(
             "mode는 preview, merge, replace 중 하나여야 한다",
         ));
     }
+    let format = input.format.as_deref().unwrap_or("simple");
+    if !matches!(format, "simple" | "tagx") {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "format은 simple 또는 tagx여야 한다",
+        ));
+    }
     let current = ops.project();
     let base_spec = if mode == "replace" {
         nuriscada_project::ProjectSpec {
             server: current.to_spec().server,
-            devices: Vec::new(),
+            // 태그 파일은 장치를 정의하지 않으므로 교체해도 장치는 유지한다.
+            devices: if format == "tagx" {
+                current.to_spec().devices
+            } else {
+                Vec::new()
+            },
             tags: Vec::new(),
             screens: current.to_spec().screens,
         }
     } else {
         current.to_spec()
     };
-    let report = nuriscada_project::legacy::import_legacy_text(
-        Some(&base_spec),
-        &input.text,
-        input.default_device.as_deref(),
-    )
+    let report = if format == "tagx" {
+        let Some(device) = input.default_device.as_deref() else {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                "tagx 가져오기는 태그를 붙일 장치(default_device)가 필요하다",
+            ));
+        };
+        nuriscada_project::tagx::import_tagx(&base_spec, &input.text, device)
+    } else {
+        nuriscada_project::legacy::import_legacy_text(
+            Some(&base_spec),
+            &input.text,
+            input.default_device.as_deref(),
+        )
+    }
     .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?;
     let next = Arc::new(
         nuriscada_project::Project::from_spec(report.project.clone())
@@ -533,6 +558,7 @@ pub(super) async fn import_project(
         let source2 = peer.source.clone();
         let detail = json!({
             "mode": mode,
+            "format": format,
             "imported_devices": report.imported_devices,
             "imported_tags": report.imported_tags,
             "renamed_tags": report.renamed_tags.len(),
