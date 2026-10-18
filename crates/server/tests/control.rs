@@ -678,3 +678,74 @@ async fn tag_file_import_previews_then_merges_for_local_admin_only() {
             .any(|t| t["name"] == "IMP.A")
     );
 }
+
+#[tokio::test]
+async fn errors_carry_stable_codes_and_a_default_message() {
+    let st = start(true, false).await;
+    let hdr = "X-NuriScada-Request: 1\r\n";
+
+    // 로그인 없이 보호된 경로: 코드와 한국어 기본 문구.
+    let (code, _, body) = request(
+        st.addr,
+        "GET",
+        "/api/v1/auth/session-check",
+        "",
+        json!({}),
+        "",
+    )
+    .await;
+    let _ = (code, body);
+    let (code, _, body) = request(st.addr, "GET", "/api/v1/project", "", json!({}), "").await;
+    assert_eq!(code, 401);
+    assert_eq!(body["code"], "auth.required");
+    assert!(body["error"].as_str().is_some_and(|m| !m.is_empty()));
+
+    // 잘못된 비밀번호.
+    let (code, _, body) = request(
+        st.addr,
+        "POST",
+        "/api/v1/auth/login",
+        "",
+        json!({"username":"admin","password":"wrong-password-123"}),
+        hdr,
+    )
+    .await;
+    assert_eq!(code, 401);
+    assert_eq!(body["code"], "auth.bad_credentials");
+
+    // 확인 헤더가 없는 변경 요청.
+    let (code, _, body) = request(
+        st.addr,
+        "POST",
+        "/api/v1/auth/login",
+        "",
+        json!({"username":"admin","password":PASSWORD}),
+        "",
+    )
+    .await;
+    assert_eq!(code, 403);
+    assert_eq!(body["code"], "request.missing_header");
+
+    // 관리자 전용 경로에 운전원이 접근.
+    let operator = login(&st, "operator").await;
+    let (code, _, body) =
+        request(st.addr, "GET", "/api/v1/project", &operator, json!({}), "").await;
+    assert_eq!(code, 403);
+    assert!(
+        body["code"].as_str().is_some_and(|c| c.contains('.')),
+        "{body}"
+    );
+
+    // 설정 검증 실패는 코드와 상세를 함께 준다.
+    let admin = login(&st, "admin").await;
+    let (_, _, doc) = request(st.addr, "GET", "/api/v1/project", &admin, json!({}), "").await;
+    let mut bad = doc["project"].clone();
+    bad["tag"][0]["device"] = json!("missing_device");
+    let (code, _, body) = request(st.addr, "POST", "/api/v1/project", &admin, bad, hdr).await;
+    assert_eq!(code, 400);
+    assert_eq!(body["code"], "project.invalid");
+    assert!(
+        body["detail"].as_str().is_some_and(|d| !d.is_empty()),
+        "{body}"
+    );
+}

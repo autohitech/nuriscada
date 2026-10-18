@@ -6,6 +6,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use crate::error_code::Code;
 use axum::{
     Extension, Json,
     extract::{ConnectInfo, Path, Query, Request, State},
@@ -32,12 +33,15 @@ pub(super) struct Peer {
 
 type Error = (StatusCode, Json<Value>);
 type Result<T> = std::result::Result<T, Error>;
-fn error(code: StatusCode, message: &str) -> Error {
-    (code, Json(json!({"error":message})))
+fn error(status: StatusCode, code: Code) -> Error {
+    code.response(status, None)
+}
+fn error_detail(status: StatusCode, code: Code, detail: &str) -> Error {
+    code.response(status, Some(detail))
 }
 fn internal(e: impl std::fmt::Display) -> Error {
     eprintln!("조작 API 오류: {e}");
-    error(StatusCode::INTERNAL_SERVER_ERROR, "서버 저장·처리 오류")
+    error(StatusCode::INTERNAL_SERVER_ERROR, Code::Internal)
 }
 
 async fn blocking<T: Send + 'static>(
@@ -90,7 +94,7 @@ pub(super) async fn guard(State(state): State<AppState>, mut req: Request, next:
             "/api/v1/auth/login" | "/api/v1/auth/logout"
         )
     {
-        return error(StatusCode::FORBIDDEN, "공개 모드에서는 변경할 수 없다").into_response();
+        return error(StatusCode::FORBIDDEN, Code::PublicReadOnly).into_response();
     }
     if let Some(origin) = req.headers().get(header::ORIGIN) {
         let host = req
@@ -102,8 +106,7 @@ pub(super) async fn guard(State(state): State<AppState>, mut req: Request, next:
             .to_str()
             .is_ok_and(|o| o == format!("http://{host}") || o == format!("https://{host}"))
         {
-            return error(StatusCode::FORBIDDEN, "다른 출처의 요청은 허용하지 않는다")
-                .into_response();
+            return error(StatusCode::FORBIDDEN, Code::CrossOrigin).into_response();
         }
     }
     if !matches!(req.method().as_str(), "GET" | "HEAD")
@@ -113,7 +116,7 @@ pub(super) async fn guard(State(state): State<AppState>, mut req: Request, next:
             .and_then(|v| v.to_str().ok())
             != Some("1")
     {
-        return error(StatusCode::FORBIDDEN, "요청 확인 헤더가 필요하다").into_response();
+        return error(StatusCode::FORBIDDEN, Code::MissingHeader).into_response();
     }
     if matches!(
         req.uri().path(),
@@ -122,7 +125,7 @@ pub(super) async fn guard(State(state): State<AppState>, mut req: Request, next:
         return next.run(req).await;
     }
     let Some(token) = token(req.headers()) else {
-        return error(StatusCode::UNAUTHORIZED, "로그인이 필요하다").into_response();
+        return error(StatusCode::UNAUTHORIZED, Code::LoginRequired).into_response();
     };
     let ops = Arc::clone(ops);
     match blocking(move || ops.authenticate(&token)).await {
@@ -130,7 +133,7 @@ pub(super) async fn guard(State(state): State<AppState>, mut req: Request, next:
             req.extensions_mut().insert(principal);
             next.run(req).await
         }
-        Ok(None) => error(StatusCode::UNAUTHORIZED, "세션이 만료되었다").into_response(),
+        Ok(None) => error(StatusCode::UNAUTHORIZED, Code::SessionExpired).into_response(),
         Err(e) => e.into_response(),
     }
 }
@@ -139,7 +142,7 @@ fn operations(state: &AppState) -> Result<Arc<Operations>> {
     state
         .operations
         .clone()
-        .ok_or_else(|| error(StatusCode::NOT_FOUND, "읽기 전용 시연 서버다"))
+        .ok_or_else(|| error(StatusCode::NOT_FOUND, Code::ReadOnlyDemo))
 }
 
 pub(super) async fn session(
@@ -176,13 +179,13 @@ pub(super) async fn login(
 ) -> Result<Response> {
     let ops = operations(&state)?;
     if input.username.len() > 64 || input.password.len() > 128 {
-        return Err(error(StatusCode::BAD_REQUEST, "입력 길이가 너무 길다"));
+        return Err(error(StatusCode::BAD_REQUEST, Code::InputTooLong));
     }
     let permit = ops
         .login_slots
         .clone()
         .try_acquire_owned()
-        .map_err(|_| error(StatusCode::TOO_MANY_REQUESTS, "잠시 후 다시 시도하라"))?;
+        .map_err(|_| error(StatusCode::TOO_MANY_REQUESTS, Code::RateLimited))?;
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         ops.login(&input.username, &input.password, &peer.source)
@@ -192,16 +195,10 @@ pub(super) async fn login(
     let t = match result {
         Ok(Some(t)) => t,
         Ok(None) => {
-            return Err(error(
-                StatusCode::UNAUTHORIZED,
-                "계정 또는 비밀번호를 확인하라",
-            ));
+            return Err(error(StatusCode::UNAUTHORIZED, Code::BadCredentials));
         }
         Err(e) if e.to_string() == "로그인 시도 제한" => {
-            return Err(error(
-                StatusCode::TOO_MANY_REQUESTS,
-                "60초 후 다시 시도하라",
-            ));
+            return Err(error(StatusCode::TOO_MANY_REQUESTS, Code::LoginLocked));
         }
         Err(e) => return Err(internal(e)),
     };
@@ -249,20 +246,17 @@ pub(super) async fn create_user(
     Json(input): Json<NewUser>,
 ) -> Result<Json<Value>> {
     if user.role != Role::Admin {
-        return Err(error(StatusCode::FORBIDDEN, "관리자 권한이 필요하다"));
+        return Err(error(StatusCode::FORBIDDEN, Code::AdminRequired));
     }
     if !peer.loopback || state.guard.allowed_hosts.is_none() {
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "계정 변경은 로컬에서만 가능하다",
-        ));
+        return Err(error(StatusCode::FORBIDDEN, Code::AccountsLocalOnly));
     }
     let ops = operations(&state)?;
     let permit = ops
         .login_slots
         .clone()
         .try_acquire_owned()
-        .map_err(|_| error(StatusCode::TOO_MANY_REQUESTS, "잠시 후 다시 시도하라"))?;
+        .map_err(|_| error(StatusCode::TOO_MANY_REQUESTS, Code::RateLimited))?;
     blocking(move || {
         let _permit = permit;
         ops.create_user(
@@ -297,7 +291,7 @@ pub(super) async fn alarm_history(
 ) -> Result<Json<Value>> {
     let ops = operations(&state)?;
     if page.tag.as_ref().is_some_and(|t| t.len() > 256) {
-        return Err(error(StatusCode::BAD_REQUEST, "태그 이름이 너무 길다"));
+        return Err(error(StatusCode::BAD_REQUEST, Code::TagNameTooLong));
     }
     let rows = blocking(move || ops.alarm_page(page.before, page.tag)).await?;
     Ok(Json(json!({"records":rows})))
@@ -323,10 +317,7 @@ pub(super) async fn tag_history(
 ) -> Result<Response> {
     let ops = operations(&state)?;
     if q.tag.is_empty() || q.tag.len() > 256 {
-        return Err(error(
-            StatusCode::BAD_REQUEST,
-            "올바른 태그 이름이 필요하다",
-        ));
+        return Err(error(StatusCode::BAD_REQUEST, Code::TagNameInvalid));
     }
     let tag_name = q.tag.clone();
     let rows = blocking(move || ops.tag_history(&q.tag, q.from_ms, q.to_ms, q.limit)).await?;
@@ -366,10 +357,7 @@ pub(super) async fn acknowledge(
         || !peer.loopback
         || state.guard.allowed_hosts.is_none()
     {
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "알람 확인 권한 또는 로컬 접속이 필요하다",
-        ));
+        return Err(error(StatusCode::FORBIDDEN, Code::AckForbidden));
     }
     let changed = blocking(move || ops.acknowledge(id, &user.username, &peer.source)).await?;
     Ok(Json(json!({"ok":true,"changed":changed})))
@@ -380,7 +368,7 @@ pub(super) async fn audit(
     Query(page): Query<Page>,
 ) -> Result<Json<Value>> {
     if user.role != Role::Admin {
-        return Err(error(StatusCode::FORBIDDEN, "관리자 권한이 필요하다"));
+        return Err(error(StatusCode::FORBIDDEN, Code::AdminRequired));
     }
     let ops = operations(&state)?;
     let rows = blocking(move || {
@@ -404,7 +392,7 @@ pub(super) async fn get_project(
     Extension(user): Extension<Principal>,
 ) -> Result<Json<Value>> {
     if user.role != Role::Admin {
-        return Err(error(StatusCode::FORBIDDEN, "관리자 권한이 필요하다"));
+        return Err(error(StatusCode::FORBIDDEN, Code::AdminRequired));
     }
     let ops = operations(&state)?;
     let project = ops.project();
@@ -427,20 +415,20 @@ pub(super) async fn update_project(
         || !peer.loopback
         || state.guard.allowed_hosts.is_none()
     {
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "프로젝트 설정 편집은 로컬 관리자만 가능하다",
-        ));
+        return Err(error(StatusCode::FORBIDDEN, Code::ProjectLocalAdminOnly));
     }
-    let next = Arc::new(
-        nuriscada_project::Project::from_spec(spec)
-            .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?,
-    );
+    let next = Arc::new(nuriscada_project::Project::from_spec(spec).map_err(|e| {
+        error_detail(
+            StatusCode::BAD_REQUEST,
+            Code::ProjectInvalid,
+            &e.to_string(),
+        )
+    })?);
     let _lock = ops.write_lock.lock().await;
     let check = ops.clone();
     let t = token(&headers).unwrap_or_default();
     if blocking(move || check.authenticate(&t)).await?.is_none() || user.expires_ms <= now_ms() {
-        return Err(error(StatusCode::UNAUTHORIZED, "세션이 만료되었다"));
+        return Err(error(StatusCode::UNAUTHORIZED, Code::SessionExpired));
     }
     let db = ops.clone();
     let actor = user.username.clone();
@@ -484,24 +472,15 @@ pub(super) async fn import_project(
         || !peer.loopback
         || state.guard.allowed_hosts.is_none()
     {
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "프로젝트 가져오기는 로컬 관리자만 가능하다",
-        ));
+        return Err(error(StatusCode::FORBIDDEN, Code::ImportLocalAdminOnly));
     }
     let mode = input.mode.as_deref().unwrap_or("preview");
     if !matches!(mode, "preview" | "merge" | "replace") {
-        return Err(error(
-            StatusCode::BAD_REQUEST,
-            "mode는 preview, merge, replace 중 하나여야 한다",
-        ));
+        return Err(error(StatusCode::BAD_REQUEST, Code::ImportBadMode));
     }
     let format = input.format.as_deref().unwrap_or("simple");
     if !matches!(format, "simple" | "tagx") {
-        return Err(error(
-            StatusCode::BAD_REQUEST,
-            "format은 simple 또는 tagx여야 한다",
-        ));
+        return Err(error(StatusCode::BAD_REQUEST, Code::ImportBadFormat));
     }
     let current = ops.project();
     let base_spec = if mode == "replace" {
@@ -521,10 +500,7 @@ pub(super) async fn import_project(
     };
     let report = if format == "tagx" {
         let Some(device) = input.default_device.as_deref() else {
-            return Err(error(
-                StatusCode::BAD_REQUEST,
-                "tagx 가져오기는 태그를 붙일 장치(default_device)가 필요하다",
-            ));
+            return Err(error(StatusCode::BAD_REQUEST, Code::ImportDeviceRequired));
         };
         nuriscada_project::tagx::import_tagx(&base_spec, &input.text, device)
     } else {
@@ -534,10 +510,21 @@ pub(super) async fn import_project(
             input.default_device.as_deref(),
         )
     }
-    .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    .map_err(|e| {
+        error_detail(
+            StatusCode::BAD_REQUEST,
+            Code::ProjectInvalid,
+            &e.to_string(),
+        )
+    })?;
     let next = Arc::new(
-        nuriscada_project::Project::from_spec(report.project.clone())
-            .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?,
+        nuriscada_project::Project::from_spec(report.project.clone()).map_err(|e| {
+            error_detail(
+                StatusCode::BAD_REQUEST,
+                Code::ProjectInvalid,
+                &e.to_string(),
+            )
+        })?,
     );
     let apply = matches!(mode, "merge" | "replace");
     if apply {
@@ -546,7 +533,7 @@ pub(super) async fn import_project(
         let t = token(&headers).unwrap_or_default();
         if blocking(move || check.authenticate(&t)).await?.is_none() || user.expires_ms <= now_ms()
         {
-            return Err(error(StatusCode::UNAUTHORIZED, "세션이 만료되었다"));
+            return Err(error(StatusCode::UNAUTHORIZED, Code::SessionExpired));
         }
         let db = ops.clone();
         let actor = user.username.clone();
@@ -624,21 +611,18 @@ pub(super) async fn write_tag(
             })
         })
         .await?;
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "현재 역할·접속 경로·서버 설정에서는 쓸 수 없다",
-        ));
+        return Err(error(StatusCode::FORBIDDEN, Code::WriteNotAllowed));
     }
     let _slot = ops
         .write_slots
         .clone()
         .try_acquire_owned()
-        .map_err(|_| error(StatusCode::TOO_MANY_REQUESTS, "쓰기 대기열이 가득 찼다"))?;
+        .map_err(|_| error(StatusCode::TOO_MANY_REQUESTS, Code::WriteQueueFull))?;
     let _lock = ops.write_lock.lock().await;
     let check = ops.clone();
     let t = token(&headers).unwrap_or_default();
     if blocking(move || check.authenticate(&t)).await?.is_none() || user.expires_ms <= now_ms() {
-        return Err(error(StatusCode::UNAUTHORIZED, "세션이 만료되었다"));
+        return Err(error(StatusCode::UNAUTHORIZED, Code::SessionExpired));
     }
     let project = ops.project();
     let tag = project
@@ -646,29 +630,21 @@ pub(super) async fn write_tag(
         .iter()
         .find(|t| t.name == name && t.writable)
         .cloned()
-        .ok_or_else(|| error(StatusCode::NOT_FOUND, "쓰기가 허용된 태그가 아니다"))?;
+        .ok_or_else(|| error(StatusCode::NOT_FOUND, Code::WriteTagNotWritable))?;
     let raw = match tag.space {
         Space::Coil => input.value.as_bool().map(u16::from),
         Space::Holding => input.value.as_u64().and_then(|v| u16::try_from(v).ok()),
         _ => None,
     }
-    .ok_or_else(|| {
-        error(
-            StatusCode::BAD_REQUEST,
-            "코일은 true/false, 레지스터는 원시 정수 0~65535를 입력하라",
-        )
-    })?;
+    .ok_or_else(|| error(StatusCode::BAD_REQUEST, Code::WriteBadValue))?;
     let current = state
         .hub
         .tags()
         .into_iter()
         .find(|t| t.name == name)
-        .ok_or_else(|| error(StatusCode::NOT_FOUND, "태그가 없다"))?;
+        .ok_or_else(|| error(StatusCode::NOT_FOUND, Code::TagNotFound))?;
     if current.quality != Quality::Good {
-        return Err(error(
-            StatusCode::CONFLICT,
-            "통신 품질이 나쁜 태그에는 쓸 수 없다",
-        ));
+        return Err(error(StatusCode::CONFLICT, Code::WriteBadQuality));
     }
     let old = serde_json::to_value(current.value).map_err(internal)?;
     let requested = input.value.clone();
@@ -702,9 +678,10 @@ pub(super) async fn write_tag(
     })
     .await?;
     outcome.map_err(|e| {
-        error(
+        error_detail(
             StatusCode::BAD_GATEWAY,
-            &format!("쓰기 결과 미확인: {e} (자동 재시도 없음)"),
+            Code::WriteUnconfirmed,
+            &e.to_string(),
         )
     })?;
     Ok(Json(
