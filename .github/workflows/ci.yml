@@ -81,6 +81,20 @@ jobs:
           name: load-${{ matrix.os }}
           path: load.json
           if-no-files-found: warn
+      - name: 장기 시험 기록 도구 점검 (Linux·macOS)
+        if: runner.os != 'Windows'
+        run: python3 scripts/soak.py --duration-s 10 --sample-s 2 --output soak-smoke
+      - name: 장기 시험 도구 점검 기록 보관
+        if: always() && runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-smoke-${{ matrix.os }}
+          path: |
+            soak-smoke/status.json
+            soak-smoke/samples.jsonl
+            soak-smoke/stdout.json
+            soak-smoke/stderr.log
+          if-no-files-found: warn
 
   sbom:
     name: 의존성 목록 (SBOM)

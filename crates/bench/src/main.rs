@@ -38,6 +38,10 @@ struct Args {
 }
 
 fn parse_args() -> Result<Args, String> {
+    parse_args_from(std::env::args().skip(1))
+}
+
+fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut a = Args {
         tags: 10_000,
         clients: 50,
@@ -50,7 +54,7 @@ fn parse_args() -> Result<Args, String> {
         web_dir: None,
         port: 0,
     };
-    let mut it = std::env::args().skip(1);
+    let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let mut num = |name: &str| -> Result<u64, String> {
             it.next()
@@ -63,7 +67,7 @@ fn parse_args() -> Result<Args, String> {
             "--devices" => a.devices = num("--devices")? as usize,
             "--scan-ms" => a.scan_ms = num("--scan-ms")?,
             "--duration-s" => a.duration_s = num("--duration-s")?,
-            "--change-pct" => a.change_pct = num("--change-pct")?.min(100),
+            "--change-pct" => a.change_pct = num("--change-pct")?,
             "--check" => a.check = true,
             "--json" => a.json = true,
             "--web-dir" => a.web_dir = it.next(),
@@ -76,6 +80,12 @@ fn parse_args() -> Result<Args, String> {
     }
     if a.devices == 0 || a.tags < a.devices {
         return Err("태그 수는 장치 수 이상이어야 한다".into());
+    }
+    if !a.tags.is_multiple_of(a.devices) || a.tags / a.devices > 65_536 {
+        return Err("태그 수는 장치 수의 배수이고 장치당 65536개 이하여야 한다".into());
+    }
+    if a.scan_ms < 10 || a.duration_s == 0 || a.change_pct > 100 {
+        return Err("scan-ms는 10 이상, duration-s는 1 이상, change-pct는 0~100이어야 한다".into());
     }
     Ok(a)
 }
@@ -141,6 +151,8 @@ struct ClientCounters {
     bytes: AtomicU64,
     snapshots: AtomicU64,
     connected: AtomicU64,
+    received: AtomicU64,
+    disconnected: AtomicU64,
 }
 
 async fn client(addr: SocketAddr, counters: Arc<ClientCounters>) {
@@ -149,8 +161,13 @@ async fn client(addr: SocketAddr, counters: Arc<ClientCounters>) {
         return;
     };
     counters.connected.fetch_add(1, Ordering::Relaxed);
+    let mut received = false;
     while let Some(Ok(msg)) = ws.next().await {
         if let Ok(text) = msg.into_text() {
+            if !received {
+                counters.received.fetch_add(1, Ordering::Relaxed);
+                received = true;
+            }
             counters.frames.fetch_add(1, Ordering::Relaxed);
             counters
                 .bytes
@@ -161,6 +178,7 @@ async fn client(addr: SocketAddr, counters: Arc<ClientCounters>) {
             }
         }
     }
+    counters.disconnected.fetch_add(1, Ordering::Relaxed);
 }
 
 struct Report {
@@ -170,6 +188,8 @@ struct Report {
     bytes: u64,
     snapshots: u64,
     connected: u64,
+    received: u64,
+    disconnected: u64,
     rss_start: Option<u64>,
     rss_end: Option<u64>,
     rss_max: Option<u64>,
@@ -214,6 +234,14 @@ impl Report {
     fn failures(&self) -> Vec<String> {
         let mut f = Vec::new();
         let limit = self.period_us() / 5;
+        if self.devices.len() != self.args.devices
+            || self
+                .devices
+                .iter()
+                .any(|d| d.scans == 0 || d.jitter_p99_us.is_none())
+        {
+            f.push("장치 스캔 또는 지터 표본이 없다".into());
+        }
         if self.worst_p99() > limit {
             f.push(format!(
                 "지터 p99 {} µs > 한도 {limit} µs",
@@ -234,6 +262,15 @@ impl Report {
         }
         if self.args.clients > 0 && self.frames == 0 {
             f.push("클라이언트가 아무 것도 받지 못했다".into());
+        }
+        if self.received < self.args.clients as u64 {
+            f.push(format!(
+                "값을 받은 클라이언트 {} < {}",
+                self.received, self.args.clients
+            ));
+        }
+        if self.disconnected > 0 {
+            f.push(format!("연결이 종료된 클라이언트 {}개", self.disconnected));
         }
         f
     }
@@ -265,6 +302,10 @@ impl Report {
             self.bytes as f64 / 1_048_576.0,
             self.snapshots
         );
+        println!(
+            "수신 클라이언트 {}, 연결 종료 {}",
+            self.received, self.disconnected
+        );
         if let (Some(s), Some(e), Some(m)) = (self.rss_start, self.rss_end, self.rss_max) {
             println!(
                 "메모리(RSS): 시작 {:.0} MiB → 끝 {:.0} MiB, 최대 {:.0} MiB",
@@ -292,6 +333,7 @@ impl Report {
             "scans_min": self.scans_min(), "overruns": self.overruns(), "requests_failed": self.failed(),
             "jitter_p99_us": self.worst_p99(), "jitter_max_us": self.worst_max(),
             "ws_connected": self.connected, "ws_frames": self.frames, "ws_bytes": self.bytes,
+            "ws_received": self.received, "ws_disconnected": self.disconnected,
             "ws_snapshots": self.snapshots,
             "rss_start_kib": self.rss_start, "rss_end_kib": self.rss_end, "rss_max_kib": self.rss_max,
             "cpu_pct": self.cpu_pct, "pass": self.failures().is_empty(),
@@ -401,6 +443,8 @@ async fn main() -> ExitCode {
         bytes: counters.bytes.load(Ordering::Relaxed),
         snapshots: counters.snapshots.load(Ordering::Relaxed),
         connected: counters.connected.load(Ordering::Relaxed),
+        received: counters.received.load(Ordering::Relaxed),
+        disconnected: counters.disconnected.load(Ordering::Relaxed),
         rss_start: usage_start.map(|u| u.0),
         rss_end: usage_end.map(|u| u.0),
         rss_max,
@@ -415,4 +459,49 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_unmeasurable_or_misreported_loads() {
+        for args in [
+            vec!["--duration-s", "0"],
+            vec!["--scan-ms", "0"],
+            vec!["--devices", "0"],
+            vec!["--tags", "10001"],
+            vec!["--change-pct", "101"],
+            vec!["--tags", "1000000"],
+        ] {
+            assert!(parse_args_from(args.into_iter().map(String::from)).is_err());
+        }
+        assert!(parse_args_from(Vec::<String>::new()).is_ok());
+    }
+
+    #[test]
+    fn refuses_success_without_scans_or_per_client_receipt() {
+        let mut report = Report {
+            args: parse_args_from(Vec::<String>::new()).unwrap(),
+            devices: vec![],
+            frames: 50,
+            bytes: 100,
+            snapshots: 50,
+            connected: 50,
+            received: 49,
+            disconnected: 1,
+            rss_start: None,
+            rss_end: None,
+            rss_max: None,
+            cpu_pct: None,
+        };
+        let failures = report.failures();
+        assert!(failures.iter().any(|s| s.contains("지터 표본")));
+        assert!(failures.iter().any(|s| s.contains("값을 받은 클라이언트")));
+        assert!(failures.iter().any(|s| s.contains("연결이 종료")));
+        report.received = 50;
+        report.disconnected = 0;
+        assert_eq!(report.failures().len(), 1);
+    }
 }
