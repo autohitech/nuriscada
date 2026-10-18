@@ -1,19 +1,269 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright NuriScada contributors
 
-//! REST·웹소켓 서버.
+//! REST·웹소켓 서버와 스캐너 실행.
 //!
-//! 이 크레이트는 첫 수직 조각(설계 0001)의 골격이다. 구현은 해당 단계(S1~S3)에서 채운다.
+//! 기본 바인딩은 루프백이다. 루프백에서는 `Host`와 `Origin` 헤더를 검사해 다른 웹 페이지가
+//! 브라우저를 통해 이 서버에 접근하지 못하게 한다(DNS 재바인딩 방어).
+//! 이 조각에는 인증이 없으므로 외부 노출은 명시적으로 허용했을 때만 가능하다.
 
-/// 크레이트 이름. 골격이 빌드되는지 확인하는 용도다.
-pub const CRATE_NAME: &str = "nuriscada-server";
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
+
+use axum::Json;
+use axum::Router;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{Request, State};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+use nuriscada_driver_api::{BlockData, Driver, DriverError, LinkStatus, ReadBlock};
+use nuriscada_driver_modbus_tcp::ModbusTcpClient;
+use nuriscada_project::{DriverConfig, Project};
+use nuriscada_scheduler::{Hub, PlanLimits, Update, plan, run_device};
+use serde_json::json;
+use tokio::sync::{broadcast, watch};
+use tokio::task::JoinHandle;
+
+/// 설정이 고른 드라이버를 감싸는 열거형. `Driver` 트레이트가 동적 호출이 안 되므로 열거형으로 다룬다.
+pub enum AnyDriver {
+    /// MODBUS TCP.
+    ModbusTcp(ModbusTcpClient),
+}
+
+impl Driver for AnyDriver {
+    async fn connect(&mut self) -> Result<(), DriverError> {
+        match self {
+            Self::ModbusTcp(d) => d.connect().await,
+        }
+    }
+
+    async fn read(&mut self, block: &ReadBlock) -> Result<BlockData, DriverError> {
+        match self {
+            Self::ModbusTcp(d) => d.read(block).await,
+        }
+    }
+
+    fn status(&self) -> LinkStatus {
+        match self {
+            Self::ModbusTcp(d) => d.status(),
+        }
+    }
+}
+
+/// 실행 중인 스캐너들.
+pub struct Scanners {
+    shutdown: watch::Sender<bool>,
+    tasks: Vec<JoinHandle<()>>,
+}
+
+impl Scanners {
+    /// 스캔을 멈추고 끝날 때까지 기다린다.
+    pub async fn stop(self) {
+        let _ = self.shutdown.send(true);
+        for t in self.tasks {
+            let _ = t.await;
+        }
+    }
+}
+
+/// 프로젝트의 장치마다 스캔 작업을 시작한다.
+pub fn start_scanners(project: &Arc<Project>, hub: &Arc<Hub>) -> Scanners {
+    let blocks = plan(project, PlanLimits::MODBUS);
+    let (shutdown, rx) = watch::channel(false);
+    let mut tasks = Vec::new();
+    for (index, device) in project.devices.iter().enumerate() {
+        let driver = match &device.driver {
+            DriverConfig::ModbusTcp { address } => {
+                AnyDriver::ModbusTcp(ModbusTcpClient::new(address.clone(), device.timeout))
+            }
+        };
+        let device_blocks = blocks
+            .iter()
+            .filter(|b| b.device == index)
+            .cloned()
+            .collect();
+        tasks.push(tokio::spawn(run_device(
+            Arc::clone(hub),
+            Arc::clone(project),
+            index,
+            driver,
+            device_blocks,
+            rx.clone(),
+        )));
+    }
+    Scanners { shutdown, tasks }
+}
+
+/// 요청 검사 설정.
+#[derive(Clone)]
+struct Guard {
+    /// `Some`이면 `Host` 헤더의 호스트 이름이 이 목록에 있어야 한다(루프백 바인딩).
+    allowed_hosts: Option<Arc<Vec<String>>>,
+}
+
+#[derive(Clone)]
+struct AppState {
+    hub: Arc<Hub>,
+    guard: Guard,
+}
+
+/// 루프백 바인딩이면 허용할 호스트 이름 목록을 만든다.
+fn allowed_hosts_for(listen: SocketAddr) -> Option<Vec<String>> {
+    let loopback = match listen.ip() {
+        IpAddr::V4(ip) => ip.is_loopback(),
+        IpAddr::V6(ip) => ip.is_loopback(),
+    };
+    loopback.then(|| {
+        vec![
+            "localhost".to_string(),
+            "127.0.0.1".to_string(),
+            "[::1]".to_string(),
+        ]
+    })
+}
+
+/// 호스트 부분만 꺼낸다(`host:port` → `host`, `[::1]:80` → `[::1]`).
+fn host_of(authority: &str) -> &str {
+    if let Some(end) = authority.strip_prefix('[').and_then(|r| r.find(']')) {
+        return &authority[..end + 2];
+    }
+    authority.split(':').next().unwrap_or(authority)
+}
+
+fn forbidden(reason: &str) -> Response {
+    (StatusCode::FORBIDDEN, reason.to_string()).into_response()
+}
+
+async fn host_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    if let Some(allowed) = &state.guard.allowed_hosts {
+        let headers: &HeaderMap = req.headers();
+        let host = headers
+            .get(header::HOST)
+            .and_then(|v| v.to_str().ok())
+            .map(host_of);
+        if !host.is_some_and(|h| allowed.iter().any(|a| a.eq_ignore_ascii_case(h))) {
+            return forbidden("허용되지 않은 Host");
+        }
+        // 브라우저가 보낸 Origin이 있으면 같은 호스트여야 한다.
+        if let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+            let origin_host = origin
+                .split_once("://")
+                .map_or(origin, |(_, rest)| rest)
+                .split('/')
+                .next()
+                .unwrap_or("");
+            if !allowed
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case(host_of(origin_host)))
+            {
+                return forbidden("허용되지 않은 Origin");
+            }
+        }
+    }
+    next.run(req).await
+}
+
+/// 서버의 경로를 만든다. `listen`은 실제로 바인딩한 주소다(루프백 여부로 검사를 정한다).
+pub fn router(hub: Arc<Hub>, listen: SocketAddr) -> Router {
+    let state = AppState {
+        hub,
+        guard: Guard {
+            allowed_hosts: allowed_hosts_for(listen).map(Arc::new),
+        },
+    };
+    Router::new()
+        .route("/api/v1/tags", get(tags))
+        .route("/api/v1/alarms", get(alarms))
+        .route("/api/v1/status", get(status))
+        .route("/api/v1/stream", get(stream))
+        .layer(middleware::from_fn_with_state(state.clone(), host_guard))
+        .with_state(state)
+}
+
+async fn tags(State(s): State<AppState>) -> Json<serde_json::Value> {
+    Json(json!({ "tags": s.hub.tags() }))
+}
+
+async fn alarms(State(s): State<AppState>) -> Json<serde_json::Value> {
+    Json(json!({ "active": s.hub.active_alarms(), "recent": s.hub.recent_alarms() }))
+}
+
+async fn status(State(s): State<AppState>) -> Json<serde_json::Value> {
+    Json(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "uptime_s": s.hub.uptime_secs(),
+        "tag_count": s.hub.tags().len(),
+        "devices": s.hub.devices(),
+    }))
+}
+
+fn snapshot_message(hub: &Hub) -> Message {
+    let body = json!({
+        "type": "snapshot",
+        "data": { "tags": hub.tags(), "active": hub.active_alarms(), "recent": hub.recent_alarms() },
+    });
+    Message::Text(body.to_string().into())
+}
+
+async fn stream(ws: WebSocketUpgrade, State(s): State<AppState>) -> Response {
+    ws.on_upgrade(move |socket| push_updates(socket, s.hub))
+}
+
+/// 연결할 때 전체 스냅샷을 보내고, 이후 변경된 항목만 밀어 보낸다.
+async fn push_updates(mut socket: WebSocket, hub: Arc<Hub>) {
+    // 스냅샷보다 먼저 구독해서 그 사이의 변경을 놓치지 않는다.
+    let mut rx = hub.subscribe();
+    if socket.send(snapshot_message(&hub)).await.is_err() {
+        return;
+    }
+    loop {
+        tokio::select! {
+            update = rx.recv() => match update {
+                Ok(update) => {
+                    if send_update(&mut socket, &update).await.is_err() {
+                        return;
+                    }
+                }
+                // 너무 느려서 일부를 놓쳤다: 전체 스냅샷으로 다시 맞춘다.
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    if socket.send(snapshot_message(&hub)).await.is_err() {
+                        return;
+                    }
+                }
+                Err(broadcast::error::RecvError::Closed) => return,
+            },
+            incoming = socket.recv() => match incoming {
+                None | Some(Err(_) | Ok(Message::Close(_))) => return,
+                Some(Ok(_)) => {}
+            },
+        }
+    }
+}
+
+async fn send_update(socket: &mut WebSocket, update: &Update) -> Result<(), axum::Error> {
+    let text = serde_json::to_string(update).unwrap_or_default();
+    socket.send(Message::Text(text.into())).await
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn crate_name_is_stable() {
-        assert_eq!(CRATE_NAME, "nuriscada-server");
+    fn host_parsing() {
+        assert_eq!(host_of("localhost:8080"), "localhost");
+        assert_eq!(host_of("127.0.0.1"), "127.0.0.1");
+        assert_eq!(host_of("[::1]:8080"), "[::1]");
+        assert_eq!(host_of("evil.example:80"), "evil.example");
+    }
+
+    #[test]
+    fn only_loopback_gets_a_host_guard() {
+        assert!(allowed_hosts_for("127.0.0.1:1".parse().unwrap()).is_some());
+        assert!(allowed_hosts_for("[::1]:1".parse().unwrap()).is_some());
+        assert!(allowed_hosts_for("0.0.0.0:1".parse().unwrap()).is_none());
+        assert!(allowed_hosts_for("192.168.0.5:1".parse().unwrap()).is_none());
     }
 }
