@@ -1,0 +1,15 @@
+[package]
+name = "nuriscada-sim-modbus"
+description = "시험용 MODBUS TCP 시뮬레이터 (개발·CI 전용, 배포 제외)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+

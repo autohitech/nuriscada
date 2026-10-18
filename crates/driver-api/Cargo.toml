@@ -1,0 +1,15 @@
+[package]
+name = "nuriscada-driver-api"
+description = "드라이버 인터페이스와 공통 형식."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nuriscada-core = { path = "../core" }

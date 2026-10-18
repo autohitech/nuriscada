@@ -1,0 +1,15 @@
+[package]
+name = "nuriscada-core"
+description = "태그 모델, 값 환산, 알람 엔진. I/O 없는 순수 로직."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+

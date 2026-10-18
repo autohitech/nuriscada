@@ -1,0 +1,15 @@
+[package]
+name = "nuriscada-driver-modbus-tcp"
+description = "MODBUS TCP 마스터 드라이버."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nuriscada-driver-api = { path = "../driver-api" }

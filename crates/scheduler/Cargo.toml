@@ -1,0 +1,16 @@
+[package]
+name = "nuriscada-scheduler"
+description = "주기 스캔 스케줄러와 지터 계측."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nuriscada-core = { path = "../core" }
+nuriscada-driver-api = { path = "../driver-api" }

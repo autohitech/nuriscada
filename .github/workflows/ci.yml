@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 툴체인
+        run: rustup show
+      - name: 서식
+        run: cargo fmt --all -- --check
+      - name: 정적 검사
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: 시험
+        run: cargo test --workspace
+
+  deny:
+    name: 의존성 라이선스·취약점 검사
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2

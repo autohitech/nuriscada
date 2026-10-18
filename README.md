@@ -15,6 +15,16 @@ NuriScada는 Windows, Linux, macOS에서 동작하는 무료 오픈소스 SCADA 
 | [결정 기록](docs/decisions/) | 확정한 결정 |
 | [설계 0001: 첫 수직 조각](docs/design/0001-vertical-slice-1.md) | 첫 구현 범위, 수용 기준, 구조, 작업 분해 (초안) |
 
+## 개발
+
+Rust 작업 공간(`crates/`)과 웹 UI(`web/`)로 구성한다. 첫 수직 조각 설계는 [설계 0001](docs/design/0001-vertical-slice-1.md)이다.
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
 ## 방향
 
 - 처음부터 새로 만든다. 기존 제품의 코드와 자산을 가져오지 않는다.
