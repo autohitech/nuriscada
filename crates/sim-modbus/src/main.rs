@@ -23,6 +23,10 @@ async fn main() -> std::io::Result<()> {
             "--listen" => listen = args.next().unwrap_or(listen),
             "--size" => size = args.next().and_then(|v| v.parse().ok()).unwrap_or(size),
             "--demo" => demo = true,
+            "--version" | "-V" => {
+                println!("nuriscada-sim-modbus {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
             other => {
                 eprintln!("알 수 없는 인자: {other}");
                 std::process::exit(2);

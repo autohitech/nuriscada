@@ -1,0 +1,91 @@
+name: release
+
+# `v*` 태그를 올리거나 수동으로 실행하면 세 OS의 배포 묶음을 만들어 **초안(draft)·시험판(prerelease)** 릴리스로 올린다.
+# 초안은 사람이 내용과 SHA256SUMS를 확인하고 공개 버튼을 눌러야 공개된다(docs/release.md).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: 묶음 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: 웹 화면 빌드
+        working-directory: web
+        run: |
+          npm ci
+          npm run check
+          npm test
+          npm run build
+          npm run licenses
+      - name: 서버·시뮬레이터 빌드
+        run: cargo build --locked --release -p nuriscada-server -p nuriscada-sim-modbus
+      - name: 태그와 버전 일치 확인
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          actual="$(./target/release/nuriscada-server --version | awk '{print $2}')"
+          if [ "$expected" != "$actual" ]; then
+            echo "태그 버전($expected)과 실행 파일 버전($actual)이 다르다. Cargo.toml의 workspace version을 맞추라." >&2
+            exit 1
+          fi
+      - name: 묶음 만들기
+        run: python3 scripts/package.py
+      - name: 묶음 실행 확인(서버 시작·상태 응답)
+        shell: bash
+        run: python3 scripts/smoke_packaged.py dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.os }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  publish:
+    name: 초안 릴리스 만들기
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: package-*
+          merge-multiple: true
+      - name: 모든 묶음의 SHA256SUMS 합치기
+        run: |
+          cd artifacts
+          ls -la
+          for f in *.tar.gz *.zip; do sha256sum "$f"; done > SHA256SUMS.all
+          mv SHA256SUMS.all SHA256SUMS
+          cat SHA256SUMS
+      - name: 초안 릴리스(시험판)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" artifacts/* \
+            --draft --prerelease \
+            --title "NuriScada ${GITHUB_REF_NAME}" \
+            --notes-file docs/release-notes-template.md
