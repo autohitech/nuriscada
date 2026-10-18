@@ -231,6 +231,72 @@ impl Hub {
         })
     }
 
+    /// 새 프로젝트 설정으로 태그·장치 목록을 재구성하고 전체 스냅샷을 방송한다.
+    ///
+    /// 기존 최근 알람 기록과 알람 순번은 유지한다.
+    pub fn reconfigure(&self, project: &Project) {
+        let tags: Vec<TagSnapshot> = project
+            .tags
+            .iter()
+            .map(|t| {
+                let (kind, unit_text, has_alarm) = match &t.body {
+                    TagBody::Analog {
+                        unit_text, alarm, ..
+                    } => ("analog", unit_text.clone(), alarm.is_some()),
+                    TagBody::Digital { .. } => ("digital", String::new(), false),
+                };
+                TagSnapshot {
+                    name: t.name.clone(),
+                    device: project.devices[t.device].name.clone(),
+                    kind,
+                    value: None,
+                    quality: Quality::Bad,
+                    changed_ms: 0,
+                    unit_text,
+                    alarm_state: has_alarm.then_some("NORMAL"),
+                }
+            })
+            .collect();
+        let devices = project
+            .devices
+            .iter()
+            .map(|d| DeviceStatus {
+                name: d.name.clone(),
+                connected: false,
+                round_trip_ms: None,
+                requests_ok: 0,
+                requests_failed: 0,
+                scan_ms: u64::try_from(d.scan.as_millis()).unwrap_or(u64::MAX),
+                scans: 0,
+                overruns: 0,
+                jitter_p99_us: None,
+                jitter_max_us: 0,
+                last_error: None,
+            })
+            .collect();
+        let jitter = project.devices.iter().map(|_| JitterStats::new()).collect();
+        let tag_count = tags.len();
+        let snap = {
+            let mut inner = self.write();
+            inner.tags = tags;
+            inner.devices = devices;
+            inner.jitter = jitter;
+            inner.dirty.clear();
+            inner.is_dirty = vec![false; tag_count];
+            inner.publish_seq += 1;
+            HubSnapshot {
+                seq: inner.publish_seq,
+                tags: inner.tags.clone(),
+                active: Vec::new(),
+                recent: inner.alarms.iter().cloned().collect(),
+            }
+        };
+        let _ = self.wire.send(Frame {
+            seq: None,
+            text: crate::wire::encode_snapshot(&snap).into(),
+        });
+    }
+
     fn read(&self) -> RwLockReadGuard<'_, Inner> {
         self.inner.read().expect("허브 잠금")
     }

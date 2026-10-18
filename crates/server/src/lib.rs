@@ -228,6 +228,12 @@ fn build_router(
         )
         .route("/api/v1/control/tags", get(control::control_tags))
         .route("/api/v1/control/tags/{name}", post(control::write_tag))
+        .route(
+            "/api/v1/project",
+            get(control::get_project)
+                .post(control::update_project)
+                .layer(axum::extract::DefaultBodyLimit::max(262_144)),
+        )
         .route("/api/v1/tags", get(tags))
         .route("/api/v1/alarms", get(alarms))
         .route("/api/v1/status", get(status))
