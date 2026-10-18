@@ -21,6 +21,8 @@ confidence-threshold = 0.9
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# 작업 공간 안의 경로 의존성은 버전을 쓰지 않는다 (비공개 크레이트에만 허용).
+allow-wildcard-paths = true
 
 [advisories]
 version = 2
