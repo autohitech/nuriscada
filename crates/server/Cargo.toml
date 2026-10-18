@@ -19,7 +19,7 @@ nuriscada-scheduler = { path = "../scheduler" }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "ws"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "fs"] }
 
 [dev-dependencies]
 nuriscada-sim-modbus = { path = "../sim-modbus" }

@@ -33,3 +33,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
+
+  web:
+    name: web (node)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: 타입·접근성 검사
+        run: npm run check
+      - name: 단위 시험
+        run: npm test
+      - name: 빌드
+        run: npm run build
+      - name: 의존성 라이선스 검사
+        run: npm run licenses
