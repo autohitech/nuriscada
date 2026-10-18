@@ -36,12 +36,12 @@ gh api repos/autohitech/nuriscada/private-vulnerability-reporting   # {"enabled"
 
 ## 3. `main` 브랜치 보호
 
-저장소가 공개되어 브랜치 보호(또는 Rulesets)를 쓸 수 있습니다. [결정 0009](decisions/0009-github-operations.md)는 "보호 없음"으로 정했으므로 이 설정은 **결정을 바꾸는 일**입니다. 바꾼다면 다음을 권합니다.
+> **상태: 켜짐**(2026-10-18). 설정 내용과 이유는 [결정 0009](decisions/0009-github-operations.md)에 있다. PR과 CI 통과가 필수이고 관리자도 직접 push할 수 없다.
 
-- Settings → Rules → Rulesets(또는 Branches → Branch protection rules)에서 `main`에 **Require a pull request before merging**, **Require status checks to pass**를 켠다.
-- 필수 검사: `rust (ubuntu-latest)`, `rust (macos-latest)`, `rust (windows-latest)`, `web (node)`, `의존성 라이선스·취약점 검사`.
-- **Block force pushes**와 삭제 금지를 켠다. 관리자 예외가 필요하면 명시한다.
-- 외부 기여가 시작되면 리뷰 1명 요구와 DCO 검사(DCO 앱 또는 워크플로)를 함께 켠다.
+- 필수 검사 이름: `rust (ubuntu-latest)`, `rust (macos-latest)`, `rust (windows-latest)`, `web (node)`, `의존성 라이선스·취약점 검사`. CI 작업 이름을 바꾸면 보호 설정의 필수 검사도 바꿔야 한다.
+- 현재 설정을 보는 명령: `gh api repos/autohitech/nuriscada/branches/main/protection`
+- 긴급하게 보호를 풀어야 하면 Settings → Branches(또는 Rules)에서 임시로 끄고, 이유와 시각을 결정 0009에 적은 뒤 복구한다.
+- 메인테이너가 둘 이상이 되면 승인 필수 수를 1로 올리고 DCO 검사를 필수로 넣는 것을 검토한다.
 
 ## 4. 커밋에 노출되는 이메일
 
