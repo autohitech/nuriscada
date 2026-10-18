@@ -13,7 +13,7 @@ use std::time::Duration;
 use nuriscada_core::alarm::{AlarmError, AnalogAlarm, DigitalKind, Limits};
 use nuriscada_core::scaling::{Profile, RangeMode, ScaleParams};
 use nuriscada_driver_api::DataKind;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// 지원하는 가장 짧은 스캔 주기(밀리초). 제품 목표는 100 ms이고 시험을 위해 더 짧은 값을 허용한다.
 pub const MIN_SCAN_MS: u64 = 10;
@@ -107,6 +107,16 @@ impl Space {
             Self::Input => 3,
         }
     }
+
+    /// 설정 파일·API에서 쓰는 영역 이름.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Coil => "coil",
+            Self::Discrete => "discrete",
+            Self::Holding => "holding",
+            Self::Input => "input",
+        }
+    }
 }
 
 /// 아날로그 알람 설정.
@@ -167,29 +177,36 @@ pub struct Project {
     pub tags: Vec<Tag>,
 }
 
-// ---- 파일 형식 ----
+// ---- 파일·편집 형식 ----
 
-#[derive(Deserialize)]
+/// 편집·직렬화용 프로젝트 명세.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawProject {
+pub struct ProjectSpec {
+    /// 서버 설정.
     #[serde(default)]
-    server: RawServer,
+    pub server: ServerSpec,
+    /// 장치 목록.
     #[serde(default, rename = "device")]
-    devices: Vec<RawDevice>,
+    pub devices: Vec<DeviceSpec>,
+    /// 태그 목록.
     #[serde(default, rename = "tag")]
-    tags: Vec<RawTag>,
+    pub tags: Vec<TagSpec>,
 }
 
-#[derive(Deserialize)]
+/// 편집·직렬화용 서버 설정.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawServer {
+pub struct ServerSpec {
+    /// 수신 주소.
     #[serde(default = "default_listen")]
-    listen: String,
+    pub listen: String,
+    /// 방송 주기(ms).
     #[serde(default = "default_publish_ms")]
-    publish_ms: u64,
+    pub publish_ms: u64,
 }
 
-impl Default for RawServer {
+impl Default for ServerSpec {
     fn default() -> Self {
         Self {
             listen: default_listen(),
@@ -206,16 +223,22 @@ fn default_listen() -> String {
     "127.0.0.1:8080".to_string()
 }
 
-#[derive(Deserialize)]
+/// 편집·직렬화용 장치 명세.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawDevice {
-    name: String,
-    driver: String,
-    address: String,
+pub struct DeviceSpec {
+    /// 장치 이름.
+    pub name: String,
+    /// 드라이버(`modbus-tcp`).
+    pub driver: String,
+    /// 주소(`host:port`).
+    pub address: String,
+    /// 제한 시간(ms).
     #[serde(default = "default_timeout_ms")]
-    timeout_ms: u64,
+    pub timeout_ms: u64,
+    /// 스캔 주기(ms).
     #[serde(default = "default_scan_ms")]
-    scan_ms: u64,
+    pub scan_ms: u64,
 }
 
 fn default_timeout_ms() -> u64 {
@@ -226,54 +249,80 @@ fn default_scan_ms() -> u64 {
     100
 }
 
-#[derive(Deserialize)]
+/// 편집·직렬화용 태그 명세.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawTag {
+pub struct TagSpec {
+    /// 쓰기 허용 여부.
     #[serde(default)]
-    writable: bool,
-    name: String,
-    device: String,
+    pub writable: bool,
+    /// 태그 이름.
+    pub name: String,
+    /// 장치 이름.
+    pub device: String,
+    /// 유닛 번호.
     #[serde(default = "default_unit")]
-    unit: u8,
-    space: String,
-    address: u16,
+    pub unit: u8,
+    /// 메모리 영역(`coil`, `discrete`, `holding`, `input`).
+    pub space: String,
+    /// 주소.
+    pub address: u16,
+    /// 종류(`analog`, `digital`).
     #[serde(rename = "type")]
-    kind: String,
-    scale: Option<RawScale>,
-    alarm: Option<RawAlarm>,
+    pub kind: String,
+    /// 환산 설정(아날로그 전용).
+    pub scale: Option<ScaleSpec>,
+    /// 알람 설정.
+    pub alarm: Option<AlarmSpec>,
+    /// 단위 문자열.
     #[serde(default)]
-    unit_text: String,
+    pub unit_text: String,
 }
 
 fn default_unit() -> u8 {
     1
 }
 
-#[derive(Deserialize)]
+/// 편집·직렬화용 환산 설정.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawScale {
-    plc_base: f64,
-    plc_full: f64,
-    base: f64,
-    full: f64,
+pub struct ScaleSpec {
+    /// 장치 하한.
+    pub plc_base: f64,
+    /// 장치 상한.
+    pub plc_full: f64,
+    /// 표시 하한.
+    pub base: f64,
+    /// 표시 상한.
+    pub full: f64,
+    /// 환산 프로파일 코드.
     #[serde(default)]
-    profile: i32,
+    pub profile: i32,
+    /// 1차 지연 계수.
     #[serde(default)]
-    delay: u32,
+    pub delay: u32,
+    /// 범위 처리 코드.
     #[serde(default)]
-    range: i32,
+    pub range: i32,
 }
 
-#[derive(Deserialize)]
+/// 편집·직렬화용 알람 설정.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawAlarm {
-    kind: u8,
-    hihi: Option<f64>,
-    high: Option<f64>,
-    low: Option<f64>,
-    lolo: Option<f64>,
+pub struct AlarmSpec {
+    /// 알람 종류.
+    pub kind: u8,
+    /// 상상한.
+    pub hihi: Option<f64>,
+    /// 상한.
+    pub high: Option<f64>,
+    /// 하한.
+    pub low: Option<f64>,
+    /// 하하한.
+    pub lolo: Option<f64>,
+    /// 복귀 여유.
     #[serde(default)]
-    gap: f64,
+    pub gap: f64,
 }
 
 fn parse_space(s: &str) -> Result<Space, ConfigError> {
@@ -292,12 +341,54 @@ fn alarm_error(tag: &str, e: AlarmError) -> ConfigError {
     ConfigError::Invalid(format!("태그 `{tag}`의 알람: {e}"))
 }
 
+fn check_finite(label: &str, v: f64) -> Result<f64, ConfigError> {
+    if v.is_finite() {
+        Ok(v)
+    } else {
+        invalid(format!("{label}: 유한한 숫자여야 한다"))
+    }
+}
+
+fn toml_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn toml_f64(v: f64) -> String {
+    if v == 0.0 {
+        return "0.0".to_string();
+    }
+    let s = v.to_string();
+    if s.contains('.') || s.contains('e') || s.contains('E') {
+        s
+    } else {
+        format!("{s}.0")
+    }
+}
+
 impl Project {
     /// TOML 문자열에서 프로젝트를 읽고 검증한다.
     pub fn from_toml(text: &str) -> Result<Self, ConfigError> {
-        let raw: RawProject =
+        let raw: ProjectSpec =
             toml::from_str(text).map_err(|e| ConfigError::Parse(e.to_string()))?;
+        Self::from_spec(raw)
+    }
 
+    /// 편집 명세를 검증해 프로젝트를 만든다.
+    pub fn from_spec(raw: ProjectSpec) -> Result<Self, ConfigError> {
         let mut devices = Vec::new();
         let mut names = HashSet::new();
         for d in raw.devices {
@@ -312,6 +403,9 @@ impl Project {
                     "장치 `{}`: 지원하지 않는 드라이버 `{}` (modbus-tcp만 지원)",
                     d.name, d.driver
                 ));
+            }
+            if d.address.trim().is_empty() {
+                return invalid(format!("장치 `{}`: 주소가 비어 있다", d.name));
             }
             if d.scan_ms < MIN_SCAN_MS {
                 return invalid(format!(
@@ -363,15 +457,21 @@ impl Project {
                     let Some(s) = t.scale else {
                         return invalid(format!("태그 `{}`: scale이 필요하다", t.name));
                     };
+                    let label = format!("태그 `{}` 환산", t.name);
+                    let plc_base = check_finite(&label, s.plc_base)?;
+                    let plc_full = check_finite(&label, s.plc_full)?;
+                    let base = check_finite(&label, s.base)?;
+                    let full = check_finite(&label, s.full)?;
                     let alarm = match t.alarm {
                         None => None,
                         Some(a) => {
+                            let al = format!("태그 `{}` 알람", t.name);
                             let limits = Limits {
-                                hihi: a.hihi,
-                                high: a.high,
-                                low: a.low,
-                                lolo: a.lolo,
-                                gap: a.gap,
+                                hihi: a.hihi.map(|v| check_finite(&al, v)).transpose()?,
+                                high: a.high.map(|v| check_finite(&al, v)).transpose()?,
+                                low: a.low.map(|v| check_finite(&al, v)).transpose()?,
+                                lolo: a.lolo.map(|v| check_finite(&al, v)).transpose()?,
+                                gap: check_finite(&al, a.gap)?,
                             };
                             AnalogAlarm::new(a.kind, limits)
                                 .map_err(|e| alarm_error(&t.name, e))?;
@@ -383,10 +483,10 @@ impl Project {
                     };
                     TagBody::Analog {
                         scale: ScaleParams {
-                            plc_base: s.plc_base,
-                            plc_full: s.plc_full,
-                            base: s.base,
-                            full: s.full,
+                            plc_base,
+                            plc_full,
+                            base,
+                            full,
                             profile: Profile::from_code(s.profile),
                             delay: s.delay,
                             range: RangeMode::from_code(s.range),
@@ -446,5 +546,159 @@ impl Project {
             devices,
             tags,
         })
+    }
+
+    /// 현재 프로젝트를 편집 명세로 변환한다.
+    pub fn to_spec(&self) -> ProjectSpec {
+        ProjectSpec {
+            server: ServerSpec {
+                listen: self.server.listen.clone(),
+                publish_ms: u64::try_from(self.server.publish.as_millis()).unwrap_or(100),
+            },
+            devices: self
+                .devices
+                .iter()
+                .map(|d| {
+                    let DriverConfig::ModbusTcp { address } = &d.driver;
+                    DeviceSpec {
+                        name: d.name.clone(),
+                        driver: "modbus-tcp".to_string(),
+                        address: address.clone(),
+                        timeout_ms: u64::try_from(d.timeout.as_millis()).unwrap_or(500),
+                        scan_ms: u64::try_from(d.scan.as_millis()).unwrap_or(100),
+                    }
+                })
+                .collect(),
+            tags: self
+                .tags
+                .iter()
+                .map(|t| {
+                    let (kind, scale, alarm, unit_text) = match &t.body {
+                        TagBody::Analog {
+                            scale,
+                            alarm,
+                            unit_text,
+                        } => (
+                            "analog".to_string(),
+                            Some(ScaleSpec {
+                                plc_base: scale.plc_base,
+                                plc_full: scale.plc_full,
+                                base: scale.base,
+                                full: scale.full,
+                                profile: scale.profile.code(),
+                                delay: scale.delay,
+                                range: scale.range.code(),
+                            }),
+                            alarm.map(|a| AlarmSpec {
+                                kind: a.kind,
+                                hihi: a.limits.hihi,
+                                high: a.limits.high,
+                                low: a.limits.low,
+                                lolo: a.limits.lolo,
+                                gap: a.limits.gap,
+                            }),
+                            unit_text.clone(),
+                        ),
+                        TagBody::Digital { alarm_kind } => (
+                            "digital".to_string(),
+                            None,
+                            alarm_kind.map(|kind| AlarmSpec {
+                                kind,
+                                hihi: None,
+                                high: None,
+                                low: None,
+                                lolo: None,
+                                gap: 0.0,
+                            }),
+                            String::new(),
+                        ),
+                    };
+                    TagSpec {
+                        writable: t.writable,
+                        name: t.name.clone(),
+                        device: self.devices[t.device].name.clone(),
+                        unit: t.unit,
+                        space: t.space.as_str().to_string(),
+                        address: t.address,
+                        kind,
+                        scale,
+                        alarm,
+                        unit_text,
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    /// 프로젝트를 표준 TOML 문자열로 직렬화한다.
+    pub fn to_toml(&self) -> String {
+        let spec = self.to_spec();
+        let mut out = String::new();
+        out.push_str("[server]\n");
+        out.push_str(&format!("listen = {}\n", toml_str(&spec.server.listen)));
+        out.push_str(&format!("publish_ms = {}\n", spec.server.publish_ms));
+        for d in &spec.devices {
+            out.push_str("\n[[device]]\n");
+            out.push_str(&format!("name = {}\n", toml_str(&d.name)));
+            out.push_str(&format!("driver = {}\n", toml_str(&d.driver)));
+            out.push_str(&format!("address = {}\n", toml_str(&d.address)));
+            out.push_str(&format!("timeout_ms = {}\n", d.timeout_ms));
+            out.push_str(&format!("scan_ms = {}\n", d.scan_ms));
+        }
+        for t in &spec.tags {
+            out.push_str("\n[[tag]]\n");
+            out.push_str(&format!("name = {}\n", toml_str(&t.name)));
+            if t.writable {
+                out.push_str("writable = true\n");
+            }
+            out.push_str(&format!("device = {}\n", toml_str(&t.device)));
+            if t.unit != 1 {
+                out.push_str(&format!("unit = {}\n", t.unit));
+            }
+            out.push_str(&format!("space = {}\n", toml_str(&t.space)));
+            out.push_str(&format!("address = {}\n", t.address));
+            out.push_str(&format!("type = {}\n", toml_str(&t.kind)));
+            if !t.unit_text.is_empty() {
+                out.push_str(&format!("unit_text = {}\n", toml_str(&t.unit_text)));
+            }
+            if let Some(s) = &t.scale {
+                let mut fields = vec![
+                    format!("plc_base = {}", toml_f64(s.plc_base)),
+                    format!("plc_full = {}", toml_f64(s.plc_full)),
+                    format!("base = {}", toml_f64(s.base)),
+                    format!("full = {}", toml_f64(s.full)),
+                ];
+                if s.profile != 0 {
+                    fields.push(format!("profile = {}", s.profile));
+                }
+                if s.delay != 0 {
+                    fields.push(format!("delay = {}", s.delay));
+                }
+                if s.range != 0 {
+                    fields.push(format!("range = {}", s.range));
+                }
+                out.push_str(&format!("scale = {{ {} }}\n", fields.join(", ")));
+            }
+            if let Some(a) = &t.alarm {
+                let mut fields = vec![format!("kind = {}", a.kind)];
+                if let Some(v) = a.hihi {
+                    fields.push(format!("hihi = {}", toml_f64(v)));
+                }
+                if let Some(v) = a.high {
+                    fields.push(format!("high = {}", toml_f64(v)));
+                }
+                if let Some(v) = a.low {
+                    fields.push(format!("low = {}", toml_f64(v)));
+                }
+                if let Some(v) = a.lolo {
+                    fields.push(format!("lolo = {}", toml_f64(v)));
+                }
+                if a.gap != 0.0 {
+                    fields.push(format!("gap = {}", toml_f64(a.gap)));
+                }
+                out.push_str(&format!("alarm = {{ {} }}\n", fields.join(", ")));
+            }
+        }
+        out
     }
 }

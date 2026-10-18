@@ -104,9 +104,10 @@ async fn main() -> ExitCode {
     }
     #[cfg(not(unix))]
     let _ = new_dir;
-    let operations = match Operations::open_with_mode(
+    let operations = match Operations::open_with_config(
         &data_dir.join("operations.sqlite3"),
         Arc::clone(&project),
+        Some(std::path::PathBuf::from(&config)),
         enable_writes,
         public_read_only,
     ) {
@@ -190,6 +191,7 @@ async fn main() -> ExitCode {
     let hub = Hub::new(&project);
     let archive = operations.start_archive(Arc::clone(&hub));
     let scanners = start_scanners(&project, &hub);
+    operations.attach_scanners(scanners).await;
     println!("수신 시작: http://{bound}/api/v1/status");
 
     let web_dir = web_dir.map(std::path::PathBuf::from).or_else(|| {
@@ -202,12 +204,12 @@ async fn main() -> ExitCode {
             && data.starts_with(web)
         {
             eprintln!("데이터 디렉터리는 웹 자원 디렉터리 밖에 있어야 한다");
-            scanners.stop().await;
+            operations.stop_scanners().await;
             return ExitCode::FAILURE;
         }
         println!("웹 화면: http://{bound}/ ({})", dir.display());
     }
-    let app = router_with_operations(hub, bound, web_dir, operations);
+    let app = router_with_operations(hub, bound, web_dir, Arc::clone(&operations));
     let served = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -216,7 +218,7 @@ async fn main() -> ExitCode {
         let _ = tokio::signal::ctrl_c().await;
     })
     .await;
-    scanners.stop().await;
+    operations.stop_scanners().await;
     archive.stop().await;
     match served {
         Ok(()) => ExitCode::SUCCESS,

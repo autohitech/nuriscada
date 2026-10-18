@@ -55,3 +55,54 @@ export type StreamMessage =
   | { type: "snapshot"; data: { seq: number; tags: TagSnapshot[]; active: TagSnapshot[]; recent: AlarmRecord[] } }
   | { type: "tags"; data: { seq: number; time_ms: number; items: TagItem[] } }
   | { type: "alarms"; data: AlarmRecord[] };
+
+export interface ServerSpec {
+  listen: string;
+  publish_ms: number;
+}
+
+export interface DeviceSpec {
+  name: string;
+  driver: string;
+  address: string;
+  timeout_ms: number;
+  scan_ms: number;
+}
+
+export interface ScaleSpec {
+  plc_base: number;
+  plc_full: number;
+  base: number;
+  full: number;
+  profile: number;
+  delay: number;
+  range: number;
+}
+
+export interface AlarmSpec {
+  kind: number;
+  hihi: number | null;
+  high: number | null;
+  low: number | null;
+  lolo: number | null;
+  gap: number;
+}
+
+export interface TagSpec {
+  writable: boolean;
+  name: string;
+  device: string;
+  unit: number;
+  space: "coil" | "discrete" | "holding" | "input";
+  address: number;
+  type: "analog" | "digital";
+  scale: ScaleSpec | null;
+  alarm: AlarmSpec | null;
+  unit_text: string;
+}
+
+export interface ProjectSpec {
+  server: ServerSpec;
+  device: DeviceSpec[];
+  tag: TagSpec[];
+}
