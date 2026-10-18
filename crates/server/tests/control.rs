@@ -142,6 +142,9 @@ async fn login(st: &Stack, name: &str) -> String {
     assert!(headers.to_lowercase().contains("httponly"));
     assert!(headers.to_lowercase().contains("samesite=strict"));
     assert!(headers.to_lowercase().contains("cache-control: no-store"));
+    if st.ops.public_read_only {
+        assert!(headers.to_lowercase().contains("; secure"));
+    }
     headers
         .lines()
         .find_map(|l| {
@@ -401,4 +404,19 @@ async fn alarm_history_is_persisted_and_acknowledgement_is_separate_from_return(
             .count(),
         1
     );
+}
+
+#[tokio::test]
+async fn explicit_public_mode_accepts_proxy_host_but_keeps_authentication() {
+    let st = start_mode(false, false, true).await;
+    for (path, expected) in [("/api/v1/auth/session", 200), ("/api/v1/tags", 401)] {
+        let mut stream = TcpStream::connect(st.addr).await.unwrap();
+        stream.write_all(format!("GET {path} HTTP/1.1\r\nHost: panel.example\r\nOrigin: https://panel.example\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        assert!(
+            response.starts_with(&format!("HTTP/1.1 {expected}")),
+            "{response}"
+        );
+    }
 }

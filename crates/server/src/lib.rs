@@ -201,11 +201,17 @@ fn build_router(
     web_dir: Option<PathBuf>,
     operations: Option<Arc<operations::Operations>>,
 ) -> Router {
+    // 명시적 공개 모드는 프록시가 전달한 공개 Host를 사용한다. 변경 API는 별도로 차단한다.
+    let public_mode = operations.as_ref().is_some_and(|o| o.public_read_only);
     let state = AppState {
         operations,
         hub,
         guard: Guard {
-            allowed_hosts: allowed_hosts_for(listen).map(Arc::new),
+            allowed_hosts: if public_mode {
+                None
+            } else {
+                allowed_hosts_for(listen).map(Arc::new)
+            },
         },
         web_dir: web_dir.map(Arc::new),
     };
