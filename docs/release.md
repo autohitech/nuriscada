@@ -17,7 +17,7 @@ python3 scripts/smoke_packaged.py dist  # 풀어서 서버가 뜨고 인증이 �
 
 ## 릴리스 내기
 
-1. **공개 전환 조건 확인**: [결정 0007](decisions/0007-repository-release-and-ownership.md)의 8개 조건(이름 상표 조회, 법무 검토, 보안 신고 기능 활성화, 이력 점검 등). 저장소가 비공개인 동안에는 릴리스를 내부 검토용 초안으로만 만든다.
+1. **공개 전환 조건 확인**(현재 상태는 [메인테이너 가이드](maintainers.md) 5절): [결정 0007](decisions/0007-repository-release-and-ownership.md)의 8개 조건(이름 상표 조회, 법무 검토, 보안 신고 기능 활성화, 이력 점검 등). 저장소가 비공개인 동안에는 릴리스를 내부 검토용 초안으로만 만든다.
 2. 버전 올리기: 루트 `Cargo.toml`의 `[workspace.package] version`(예: `0.1.0-alpha.2`)과 `Cargo.lock`을 함께 갱신해 병합한다.
 3. `main`에서 태그를 올린다: `git tag v0.1.0-alpha.2 && git push origin v0.1.0-alpha.2`. 태그 버전과 실행 파일 버전이 다르면 워크플로가 실패한다.
 4. `release` 워크플로가 세 OS(Linux x86-64, Windows x86-64, macOS arm64)에서 웹 검사·시험·빌드, 묶음 만들기, **묶음 실행 확인**을 하고 **초안·시험판** 릴리스를 만든다.

@@ -85,8 +85,8 @@ cargo run -p nuriscada-server -- --config examples/demo.toml
 
 | 번호 | 결정할 것 | 제안 | 정하는 데 필요한 것 |
 |---|---|---|---|
-| OD-6 | 이름 상표·도메인 확인 | 이름은 NuriScada로 확정([결정 기록](docs/decisions/0011-project-name-nuriscada.md)). 상표 조회와 도메인 등록은 공개 전환 전에 한다 | 상표 데이터베이스 조회 |
-| OD-8 | 책임 제한 문구의 법적 효력, 영상 코덱 라이선스 | 법무 확인 | 전문가 검토 |
+| OD-6 | 이름 상표·도메인 확인 | 이름은 NuriScada로 확정([결정 기록](docs/decisions/0011-project-name-nuriscada.md)). 1차 조회(웹·패키지 저장소·도메인)에서 충돌은 없었다. **공식 상표 데이터베이스 조회는 전문가 의뢰가 필요하다** | 상표 전문가의 조사 |
+| OD-8 | 책임 제한 문구의 법적 효력, 영상 코덱 라이선스 | 검토 의뢰서를 준비했다. 답변 대기 | 변호사 검토 |
 
 ## 기여
 
