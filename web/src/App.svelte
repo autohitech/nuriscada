@@ -6,13 +6,14 @@
   import StatusBar from "./components/StatusBar.svelte";
   import TagTable from "./components/TagTable.svelte";
   import { Store, connect, pollStatus } from "./lib/store.svelte";
-  import { ko } from "./lib/strings";
+  import { initLocale, m } from "./lib/i18n.svelte";
   import OperationsPanel, { type SessionDoc } from "./components/OperationsPanel.svelte";
 
   const THEMES = ["dark", "light", "contrast"] as const;
   type Theme = (typeof THEMES)[number];
   const STORAGE_KEY = "nuriscada.theme";
 
+  initLocale();
   const store = new Store();
   let session = $state<SessionDoc | null>(null);
   let viewMode = $state<"split" | "graphic" | "table">("split");
@@ -63,10 +64,10 @@
   <OperationsPanel onSession={(s) => session = s} />
   {#if canRead}<main>
     <div class="workspace-col">
-      <div class="view-mode-bar" role="toolbar" aria-label="화면 표시 방식">
-        <button type="button" class:active={viewMode === "split"} onclick={() => viewMode = "split"}>그래픽 + 태그 표</button>
-        <button type="button" class:active={viewMode === "graphic"} onclick={() => viewMode = "graphic"}>그래픽 화면만</button>
-        <button type="button" class:active={viewMode === "table"} onclick={() => viewMode = "table"}>태그 표만</button>
+      <div class="view-mode-bar" role="toolbar" aria-label={m.viewModeAria}>
+        <button type="button" class:active={viewMode === "split"} onclick={() => viewMode = "split"}>{m.viewSplit}</button>
+        <button type="button" class:active={viewMode === "graphic"} onclick={() => viewMode = "graphic"}>{m.viewGraphic}</button>
+        <button type="button" class:active={viewMode === "table"} onclick={() => viewMode = "table"}>{m.viewTable}</button>
       </div>
       {#if viewMode !== "table"}
         <GraphicScreen {store} canEdit={canEditGraphic} />
@@ -76,8 +77,8 @@
       {/if}
     </div>
     <AlarmPanel {store} />
-  </main>{:else}<main class="welcome"><p>로그인하면 실시간 값과 알람을 볼 수 있습니다.</p></main>{/if}
-  <footer>{ko.safetyNotice}</footer>
+  </main>{:else}<main class="welcome"><p>{m.loginToSee}</p></main>{/if}
+  <footer>{m.safetyNotice}</footer>
 </div>
 
 <style>
