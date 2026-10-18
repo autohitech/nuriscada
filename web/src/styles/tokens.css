@@ -1,0 +1,122 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Copyright NuriScada contributors */
+
+/*
+ * 디자인 토큰 (결정 0004: 차분한 산업용, 다크 기본, 라이트·고대비 제공).
+ * 평상시는 저채도 회색 계열이고, 이상 상태만 색·아이콘·문구로 강하게 드러난다.
+ * 시스템 글꼴만 쓴다(외부 글꼴 금지, 결정 0003).
+ */
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1216;
+  --surface: #171b21;
+  --surface-2: #1e242c;
+  --border: #2a323c;
+  --text: #e6e9ee;
+  --muted: #9aa4b2;
+  --accent: #6cb2ff;
+  --focus: #6cb2ff;
+
+  --ok: #8fa3b8;
+  --warn: #f0b24a;
+  --warn-bg: #3a2f17;
+  --critical: #ff6b66;
+  --critical-bg: #3f1d1d;
+  --info: #6cb2ff;
+  --info-bg: #17293d;
+  --bad: #a9b1bd;
+  --bad-bg: #262b33;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --border: #cfd6df;
+  --text: #1a222d;
+  --muted: #566170;
+  --accent: #0b5cad;
+  --focus: #0b5cad;
+
+  --ok: #4d5f73;
+  --warn: #8a5300;
+  --warn-bg: #fff1d6;
+  --critical: #b3261e;
+  --critical-bg: #fde4e2;
+  --info: #0b5cad;
+  --info-bg: #e1eefb;
+  --bad: #5a6572;
+  --bad-bg: #e8ebef;
+}
+
+:root[data-theme="contrast"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --surface: #000000;
+  --surface-2: #101010;
+  --border: #ffffff;
+  --text: #ffffff;
+  --muted: #e0e0e0;
+  --accent: #66ccff;
+  --focus: #ffff00;
+
+  --ok: #ffffff;
+  --warn: #ffd23f;
+  --warn-bg: #000000;
+  --critical: #ff5c5c;
+  --critical-bg: #000000;
+  --info: #66ccff;
+  --info-bg: #000000;
+  --bad: #e0e0e0;
+  --bad-bg: #000000;
+}
+
+:root {
+  --font: system-ui, -apple-system, "Segoe UI", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Noto Sans Mono", monospace;
+  --radius: 6px;
+  --gap: 12px;
+  --row-h: 36px;
+  --touch-min: 44px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+#app {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

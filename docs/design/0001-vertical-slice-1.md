@@ -196,8 +196,8 @@ GUI 결합이 없고 읽기·상태만 갖는다 (SQ-C01). 쓰기는 다음 조�
 | S0 | 개발 위치 결정(완료: 0012), 작업 공간 골격과 CI(라이선스 검사 포함) | 골격 확인 |
 | S1 | `core`: 태그 모델, 환산, 알람, 기대값 시험 통과 (AC-1) | AC-1 통과 |
 | S2 | `driver-api`, `driver-modbus-tcp`, `sim-modbus` | 시뮬레이터 읽기 성공 |
-| S3 | `scheduler`와 지터 계측, `server` API, 웹 프레임워크 결정 | API 시연 (구현 완료, 프레임워크 선택 대기: [0002](0002-web-ui-framework.md)) |
-| S4 | 웹 UI 최소 화면, 알람 표시 (AC-2) | 화면 시연 |
+| S3 | `scheduler`와 지터 계측, `server` API, 웹 프레임워크 결정 | API 시연 (완료, 프레임워크는 Svelte 5로 확정: [0014](../decisions/0014-web-ui-svelte.md)) |
+| S4 | 웹 UI 최소 화면, 알람 표시 (AC-2) | 화면 시연 (구현 완료: 서버가 `web/dist`를 제공) |
 | S5 | 성능 측정(AC-3, AC-4), 세 OS·두 CPU 빌드(AC-6), 의존성 검사(AC-7) | **스택 재검토 판단 (결정 0002)** |
 
 ## 12. 열린 결정
@@ -205,7 +205,7 @@ GUI 결합이 없고 읽기·상태만 갖는다 (SQ-C01). 쓰기는 다음 조�
 | 번호 | 항목 | 제안 |
 |---|---|---|
 | D-1 | 구현 코드를 어디서 개발하나 | **해소**: 이 저장소에서 직접 개발한다 ([0012](../decisions/0012-development-location.md)) |
-| D-2 | 웹 UI 프레임워크 | 비교 완료, 사용자 선택 대기 ([0002](0002-web-ui-framework.md)) |
+| D-2 | 웹 UI 프레임워크 | **해소**: Svelte 5 ([0014](../decisions/0014-web-ui-svelte.md)) |
 | D-3 | 슬라이스용 설정 형식 | TOML |
 | D-4 | 기준 하드웨어 | 4코어·8 GB급 산업용 PC 후보 (미정) |
 | D-5 | MODBUS 구현 방식 | **해소**: 직접 구현 ([0013](../decisions/0013-modbus-tcp-implementation.md)) |

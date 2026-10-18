@@ -25,13 +25,22 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+웹 UI(`web/`)는 Svelte 5 + TypeScript + Vite다([결정 0014](docs/decisions/0014-web-ui-svelte.md)).
+
+```sh
+cd web && npm ci && npm run check && npm test && npm run build
+```
+
 ### 시연 실행
 
 ```sh
 cargo run -p nuriscada-sim-modbus -- --demo          # MODBUS TCP 시뮬레이터
+(cd web && npm ci && npm run build)                  # 웹 화면 빌드
 cargo run -p nuriscada-server -- --config examples/demo.toml
-curl http://127.0.0.1:8080/api/v1/tags
+# 브라우저에서 http://127.0.0.1:8080/ 을 연다. API: curl http://127.0.0.1:8080/api/v1/tags
 ```
+
+화면 개발 중에는 `cd web && npm run dev`로 개발 서버를 띄운다(`/api`는 로컬 서버로 넘긴다).
 
 서버는 기본적으로 루프백에서만 수신한다. 인증이 없는 초기 버전이므로 외부에 노출하지 마세요.
 

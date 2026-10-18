@@ -214,3 +214,94 @@ async fn websocket_sends_snapshot_then_changes_only() {
     let v = got.expect("TANK = 300 업데이트");
     assert_eq!(v["data"]["quality"], "good");
 }
+
+/// 임시 웹 디렉터리를 만든다.
+fn web_fixture() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "nuriscada-web-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::write(dir.join("index.html"), "<!doctype html><title>t</title>").unwrap();
+    std::fs::write(dir.join("assets/app.js"), "console.log(1)").unwrap();
+    std::fs::write(dir.join("secret.txt.bak"), "x").unwrap();
+    dir
+}
+
+async fn raw_get(addr: SocketAddr, path: &str) -> String {
+    let mut s = TcpStream::connect(addr).await.unwrap();
+    let req = format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut raw = String::new();
+    s.read_to_string(&mut raw).await.unwrap();
+    raw
+}
+
+#[tokio::test]
+async fn serves_the_web_ui_safely() {
+    let dir = web_fixture();
+    let sim = Simulator::start("127.0.0.1:0", 10).await.unwrap();
+    let project = Arc::new(
+        Project::from_toml(&format!(
+            "[[device]]\nname=\"s\"\ndriver=\"modbus-tcp\"\naddress=\"{}\"\n",
+            sim.addr()
+        ))
+        .unwrap(),
+    );
+    let hub = Hub::new(&project);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = nuriscada_server::router_with_web(hub, addr, Some(dir.clone()));
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let index = raw_get(addr, "/").await;
+    assert!(index.starts_with("HTTP/1.1 200"), "{index}");
+    assert!(index.to_lowercase().contains("content-type: text/html"));
+    assert!(index.to_lowercase().contains("cache-control: no-cache"));
+    assert!(
+        index
+            .to_lowercase()
+            .contains("content-security-policy: default-src 'self'")
+    );
+    assert!(
+        index
+            .to_lowercase()
+            .contains("x-content-type-options: nosniff")
+    );
+
+    let js = raw_get(addr, "/assets/app.js").await;
+    assert!(js.to_lowercase().contains("content-type: text/javascript"));
+    assert!(js.to_lowercase().contains("immutable"));
+
+    // 확장자 없는 경로는 첫 화면, 없는 파일은 404.
+    assert!(
+        raw_get(addr, "/some/screen")
+            .await
+            .starts_with("HTTP/1.1 200")
+    );
+    assert!(
+        raw_get(addr, "/assets/missing.js")
+            .await
+            .starts_with("HTTP/1.1 404")
+    );
+    // 디렉터리 밖으로 나가는 경로는 거부한다.
+    assert!(
+        raw_get(addr, "/../Cargo.toml")
+            .await
+            .starts_with("HTTP/1.1 404")
+    );
+    assert!(
+        raw_get(addr, "/assets/../../etc/passwd")
+            .await
+            .starts_with("HTTP/1.1 404")
+    );
+    // API는 그대로 동작하고 보안 헤더도 붙는다.
+    let status = raw_get(addr, "/api/v1/status").await;
+    assert!(status.starts_with("HTTP/1.1 200"));
+    assert!(status.to_lowercase().contains("x-frame-options: deny"));
+    let _ = std::fs::remove_dir_all(dir);
+}

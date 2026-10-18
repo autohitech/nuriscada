@@ -8,13 +8,14 @@
 //! 이 조각에는 인증이 없으므로 외부 노출은 명시적으로 허용했을 때만 가능하다.
 
 use std::net::{IpAddr, SocketAddr};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Request, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -107,6 +108,8 @@ struct Guard {
 struct AppState {
     hub: Arc<Hub>,
     guard: Guard,
+    /// 웹 UI 빌드 결과 디렉터리. 없으면 API만 제공한다.
+    web_dir: Option<Arc<PathBuf>>,
 }
 
 /// 루프백 바인딩이면 허용할 호스트 이름 목록을 만든다.
@@ -165,21 +168,125 @@ async fn host_guard(State(state): State<AppState>, req: Request, next: Next) -> 
     next.run(req).await
 }
 
-/// 서버의 경로를 만든다. `listen`은 실제로 바인딩한 주소다(루프백 여부로 검사를 정한다).
+/// 서버의 경로를 만든다(API만). `listen`은 실제로 바인딩한 주소다(루프백 여부로 검사를 정한다).
 pub fn router(hub: Arc<Hub>, listen: SocketAddr) -> Router {
+    router_with_web(hub, listen, None)
+}
+
+/// API와 웹 UI 정적 파일을 함께 제공하는 경로를 만든다. 모든 자원은 같은 출처에서 나오며
+/// 외부 CDN에 의존하지 않는다.
+pub fn router_with_web(hub: Arc<Hub>, listen: SocketAddr, web_dir: Option<PathBuf>) -> Router {
     let state = AppState {
         hub,
         guard: Guard {
             allowed_hosts: allowed_hosts_for(listen).map(Arc::new),
         },
+        web_dir: web_dir.map(Arc::new),
     };
     Router::new()
         .route("/api/v1/tags", get(tags))
         .route("/api/v1/alarms", get(alarms))
         .route("/api/v1/status", get(status))
         .route("/api/v1/stream", get(stream))
+        .fallback(static_files)
+        .layer(middleware::from_fn(security_headers))
         .layer(middleware::from_fn_with_state(state.clone(), host_guard))
         .with_state(state)
+}
+
+/// 모든 응답에 붙이는 보안 헤더.
+async fn security_headers(req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    let h = res.headers_mut();
+    h.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "default-src 'self'; connect-src 'self'; img-src 'self' data:; \
+             style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; \
+             form-action 'none'; frame-ancestors 'none'",
+        ),
+    );
+    h.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    h.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    res
+}
+
+fn content_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" => "application/json",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "ico" => "image/x-icon",
+        "woff2" => "font/woff2",
+        "txt" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
+
+/// 웹 UI 정적 파일. 디렉터리 밖으로 나가는 경로는 거부하고, 확장자 없는 경로는 `index.html`로 돌린다.
+async fn static_files(State(s): State<AppState>, uri: Uri) -> Response {
+    let Some(root) = &s.web_dir else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let rel = uri.path().trim_start_matches('/');
+    let rel = if rel.is_empty() { "index.html" } else { rel };
+    let rel_path = Path::new(rel);
+    if rel_path
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let canonical_root = match tokio::fs::canonicalize(root.as_path()).await {
+        Ok(r) => r,
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    let try_read = |p: PathBuf| {
+        let canonical_root = canonical_root.clone();
+        async move {
+            // 심볼릭 링크로 디렉터리 밖을 가리키는 경우도 막는다.
+            let real = tokio::fs::canonicalize(&p).await.ok()?;
+            if !real.starts_with(&canonical_root) {
+                return None;
+            }
+            let bytes = tokio::fs::read(&real).await.ok()?;
+            Some((real, bytes))
+        }
+    };
+
+    let found = match try_read(root.join(rel_path)).await {
+        Some(f) => Some(f),
+        // 확장자가 없는 경로는 화면 안의 경로로 보고 첫 화면을 돌려준다.
+        None if rel_path.extension().is_none() => try_read(root.join("index.html")).await,
+        None => None,
+    };
+    let Some((real, bytes)) = found else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let cache = if real.components().any(|c| c.as_os_str() == "assets") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
+    (
+        [
+            (header::CONTENT_TYPE, content_type(&real)),
+            (header::CACHE_CONTROL, cache),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 async fn tags(State(s): State<AppState>) -> Json<serde_json::Value> {
