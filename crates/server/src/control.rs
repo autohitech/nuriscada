@@ -342,9 +342,69 @@ pub(super) async fn audit(
 
 pub(super) async fn control_tags(State(state): State<AppState>) -> Result<Json<Value>> {
     let ops = operations(&state)?;
+    let project = ops.project();
     Ok(Json(
-        json!({"tags":ops.project.tags.iter().filter(|t|t.writable).map(|t|json!({"name":t.name,"kind":if t.space==Space::Coil{"bool"}else{"word"}})).collect::<Vec<_>>()}),
+        json!({"tags":project.tags.iter().filter(|t|t.writable).map(|t|json!({"name":t.name,"kind":if t.space==Space::Coil{"bool"}else{"word"}})).collect::<Vec<_>>()}),
     ))
+}
+
+pub(super) async fn get_project(
+    State(state): State<AppState>,
+    Extension(user): Extension<Principal>,
+) -> Result<Json<Value>> {
+    if user.role != Role::Admin {
+        return Err(error(StatusCode::FORBIDDEN, "관리자 권한이 필요하다"));
+    }
+    let ops = operations(&state)?;
+    let project = ops.project();
+    Ok(Json(json!({
+        "project": project.to_spec(),
+        "toml": project.to_toml(),
+    })))
+}
+
+pub(super) async fn update_project(
+    State(state): State<AppState>,
+    Extension(user): Extension<Principal>,
+    Extension(peer): Extension<Peer>,
+    headers: HeaderMap,
+    Json(spec): Json<nuriscada_project::ProjectSpec>,
+) -> Result<Json<Value>> {
+    let ops = operations(&state)?;
+    if user.role != Role::Admin
+        || ops.public_read_only
+        || !peer.loopback
+        || state.guard.allowed_hosts.is_none()
+    {
+        return Err(error(
+            StatusCode::FORBIDDEN,
+            "프로젝트 설정 편집은 로컬 관리자만 가능하다",
+        ));
+    }
+    let next = Arc::new(
+        nuriscada_project::Project::from_spec(spec)
+            .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?,
+    );
+    let _lock = ops.write_lock.lock().await;
+    let check = ops.clone();
+    let t = token(&headers).unwrap_or_default();
+    if blocking(move || check.authenticate(&t)).await?.is_none() || user.expires_ms <= now_ms() {
+        return Err(error(StatusCode::UNAUTHORIZED, "세션이 만료되었다"));
+    }
+    let db = ops.clone();
+    let actor = user.username.clone();
+    let source = peer.source.clone();
+    let saved = Arc::clone(&next);
+    blocking(move || db.save_project(saved, &actor, &source)).await?;
+    ops.stop_scanners().await;
+    state.hub.reconfigure(&next);
+    ops.attach_scanners(crate::start_scanners(&next, &state.hub))
+        .await;
+    Ok(Json(json!({
+        "ok": true,
+        "project": next.to_spec(),
+        "toml": next.to_toml(),
+    })))
 }
 
 #[derive(Deserialize)]
@@ -386,8 +446,19 @@ pub(super) async fn write_tag(
             "현재 역할·접속 경로·서버 설정에서는 쓸 수 없다",
         ));
     }
-    let tag = ops
-        .project
+    let _slot = ops
+        .write_slots
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| error(StatusCode::TOO_MANY_REQUESTS, "쓰기 대기열이 가득 찼다"))?;
+    let _lock = ops.write_lock.lock().await;
+    let check = ops.clone();
+    let t = token(&headers).unwrap_or_default();
+    if blocking(move || check.authenticate(&t)).await?.is_none() || user.expires_ms <= now_ms() {
+        return Err(error(StatusCode::UNAUTHORIZED, "세션이 만료되었다"));
+    }
+    let project = ops.project();
+    let tag = project
         .tags
         .iter()
         .find(|t| t.name == name && t.writable)
@@ -404,17 +475,6 @@ pub(super) async fn write_tag(
             "코일은 true/false, 레지스터는 원시 정수 0~65535를 입력하라",
         )
     })?;
-    let _slot = ops
-        .write_slots
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| error(StatusCode::TOO_MANY_REQUESTS, "쓰기 대기열이 가득 찼다"))?;
-    let _lock = ops.write_lock.lock().await;
-    let check = ops.clone();
-    let t = token(&headers).unwrap_or_default();
-    if blocking(move || check.authenticate(&t)).await?.is_none() || user.expires_ms <= now_ms() {
-        return Err(error(StatusCode::UNAUTHORIZED, "세션이 만료되었다"));
-    }
     let current = state
         .hub
         .tags()
@@ -435,7 +495,7 @@ pub(super) async fn write_tag(
     let target = name.clone();
     blocking(move||db.audit(Event{actor:&actor,source:&source,action:"write.request",target:&target,
         detail:json!({"previous_display_value":old,"requested_raw_value":requested,"outcome":"pending"})})).await?;
-    let device = &ops.project.devices[tag.device];
+    let device = &project.devices[tag.device];
     let DriverConfig::ModbusTcp { address } = &device.driver;
     let mut driver = ModbusTcpClient::new(address.clone(), device.timeout);
     let outcome = driver

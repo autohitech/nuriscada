@@ -26,6 +26,16 @@ impl Profile {
             _ => Self::Passthrough,
         }
     }
+
+    /// 프로파일의 설정 코드(0: 선형, 1: 코사인, 3: 구간 반전, 4: 무변환).
+    pub fn code(self) -> i32 {
+        match self {
+            Self::Linear => 0,
+            Self::Cosine => 1,
+            Self::SplitMirror => 3,
+            Self::Passthrough => 4,
+        }
+    }
 }
 
 /// 범위 처리 방식.
@@ -46,6 +56,15 @@ impl RangeMode {
             1 => Self::Clamp,
             2 => Self::Drop,
             _ => Self::None,
+        }
+    }
+
+    /// 범위 처리 방식의 설정 코드(0: 없음, 1: 자름, 2: 버림).
+    pub fn code(self) -> i32 {
+        match self {
+            Self::None => 0,
+            Self::Clamp => 1,
+            Self::Drop => 2,
         }
     }
 }

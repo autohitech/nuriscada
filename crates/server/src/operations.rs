@@ -228,8 +228,9 @@ pub struct Operations {
     db: Mutex<Connection>,
     attempts: Mutex<VecDeque<Instant>>,
     dummy_hash: String,
-    /// 조작 대상 프로젝트.
-    pub project: Arc<Project>,
+    project: Mutex<Arc<Project>>,
+    config_path: Option<std::path::PathBuf>,
+    scanners: tokio::sync::Mutex<Option<crate::Scanners>>,
     /// 로컬 쓰기를 명시적으로 허용했는지. 접속 경로 검사도 별도로 수행한다.
     pub writes_enabled: bool,
     /// 비밀번호 연산 동시 작업 한도.
@@ -253,6 +254,17 @@ impl Operations {
         writes_enabled: bool,
         public_read_only: bool,
     ) -> Result<Arc<Self>> {
+        Self::open_with_config(path, project, None, writes_enabled, public_read_only)
+    }
+
+    /// 설정 파일 경로를 함께 연결해 런타임 편집 시 파일 저장까지 수행한다.
+    pub fn open_with_config(
+        path: &Path,
+        project: Arc<Project>,
+        config_path: Option<std::path::PathBuf>,
+        writes_enabled: bool,
+        public_read_only: bool,
+    ) -> Result<Arc<Self>> {
         let db = Connection::open(path)?;
         db.busy_timeout(Duration::from_secs(5))?;
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
@@ -268,7 +280,9 @@ impl Operations {
             db: Mutex::new(db),
             attempts: Mutex::new(VecDeque::new()),
             dummy_hash: hash_password(&random_hex()?)?,
-            project,
+            project: Mutex::new(project),
+            config_path,
+            scanners: tokio::sync::Mutex::new(None),
             writes_enabled: writes_enabled && !public_read_only,
             login_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             write_slots: Arc::new(tokio::sync::Semaphore::new(16)),
@@ -276,6 +290,73 @@ impl Operations {
         });
         ops.verify_audit()?;
         Ok(ops)
+    }
+
+    /// 현재 활성 프로젝트.
+    pub fn project(&self) -> Arc<Project> {
+        self.project.lock().expect("프로젝트 잠금").clone()
+    }
+
+    /// 스캐너 핸들을 등록한다(런타임 설정 변경 시 재시작에 사용).
+    pub async fn attach_scanners(&self, scanners: crate::Scanners) {
+        *self.scanners.lock().await = Some(scanners);
+    }
+
+    /// 스캐너를 멈추고 회수한다.
+    pub async fn stop_scanners(&self) {
+        if let Some(scanners) = self.scanners.lock().await.take() {
+            scanners.stop().await;
+        }
+    }
+
+    /// 프로젝트를 검증·저장·교체하고 감사 기록을 남긴다.
+    pub fn save_project(
+        &self,
+        next: Arc<Project>,
+        actor: &str,
+        source: &str,
+    ) -> Result<Arc<Project>> {
+        let toml_text = next.to_toml();
+        if let Some(cfg) = &self.config_path {
+            let parent = cfg.parent().unwrap_or_else(|| Path::new("."));
+            let stem = cfg
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("project.toml");
+            let tmp = parent.join(format!(".{stem}.{}.tmp", random_hex()?));
+            let backup = cfg.with_extension("toml.bak");
+            if cfg.exists() {
+                let _ = std::fs::copy(cfg, &backup);
+            }
+            let mut file = std::fs::File::create(&tmp)?;
+            use std::io::Write;
+            file.write_all(toml_text.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+            if let Err(e) = std::fs::rename(&tmp, cfg) {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(format!("설정 파일 교체 실패: {e}").into());
+            }
+        }
+        let prev = {
+            let mut guard = self.project.lock().map_err(|_| "프로젝트 잠금 오류")?;
+            std::mem::replace(&mut *guard, Arc::clone(&next))
+        };
+        let detail = json!({
+            "previous_devices": prev.devices.len(),
+            "previous_tags": prev.tags.len(),
+            "devices": next.devices.len(),
+            "tags": next.tags.len(),
+            "persisted": self.config_path.is_some(),
+        });
+        self.audit(Event {
+            actor,
+            source,
+            action: "project.update",
+            target: "project",
+            detail,
+        })?;
+        Ok(prev)
     }
 
     /// 관리자 부트스트랩이 필요한지.

@@ -101,6 +101,7 @@ writable=true
     let hub = Hub::new(&project);
     let archive = ops.start_archive(hub.clone());
     let scanners = start_scanners(&project, &hub);
+    ops.attach_scanners(scanners).await;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let bound = if public {
@@ -111,7 +112,6 @@ writable=true
     let app = router_with_operations(hub, bound, None, ops.clone());
     let task = tokio::spawn(async move {
         let _archive = archive;
-        let _scanners = scanners;
         axum::serve(
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -419,4 +419,109 @@ async fn explicit_public_mode_accepts_proxy_host_but_keeps_authentication() {
             "{response}"
         );
     }
+}
+
+#[tokio::test]
+async fn project_configuration_can_be_edited_and_reloaded_by_local_admin() {
+    let st = start(true, false).await;
+    let operator = login(&st, "operator").await;
+    assert_eq!(
+        request(st.addr, "GET", "/api/v1/project", &operator, json!({}), "")
+            .await
+            .0,
+        403
+    );
+    let admin = login(&st, "admin").await;
+    let (code, _, body) = request(st.addr, "GET", "/api/v1/project", &admin, json!({}), "").await;
+    assert_eq!(code, 200);
+    let mut spec = body["project"].clone();
+    assert_eq!(spec["tag"].as_array().unwrap().len(), 2);
+
+    // 잘못된 설정은 거부하고 기존 태그를 유지한다.
+    let mut bad = spec.clone();
+    bad["tag"][0]["device"] = json!("missing_device");
+    assert_eq!(
+        request(
+            st.addr,
+            "POST",
+            "/api/v1/project",
+            &admin,
+            bad,
+            "X-NuriScada-Request: 1\r\n"
+        )
+        .await
+        .0,
+        400
+    );
+
+    // 새 아날로그 태그 TEMP(주소 1)를 추가하고 런타임 스캔이 반영되는지 확인한다.
+    st.sim.set_holding(1, &[42]);
+    spec["tag"].as_array_mut().unwrap().push(json!({
+        "name": "TEMP",
+        "writable": true,
+        "device": "sim",
+        "unit": 1,
+        "space": "holding",
+        "address": 1,
+        "type": "analog",
+        "unit_text": "C",
+        "scale": { "plc_base": 0.0, "plc_full": 100.0, "base": 0.0, "full": 100.0, "profile": 0, "delay": 0, "range": 0 },
+        "alarm": null
+    }));
+    let (code, _, updated) = request(
+        st.addr,
+        "POST",
+        "/api/v1/project",
+        &admin,
+        spec,
+        "X-NuriScada-Request: 1\r\n",
+    )
+    .await;
+    assert_eq!(code, 200, "{updated}");
+    assert!(
+        updated["toml"]
+            .as_str()
+            .unwrap()
+            .contains("name = \"TEMP\"")
+    );
+
+    // 스캐너 재시작 후 새 태그 값이 읽히고 쓰기도 동작하는지 확인한다.
+    let mut temp_val = Value::Null;
+    for _ in 0..30 {
+        let (_, _, tags_doc) = request(st.addr, "GET", "/api/v1/tags", &admin, json!({}), "").await;
+        if let Some(t) = tags_doc["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "TEMP")
+            && t["quality"] == "good"
+        {
+            temp_val = t["value"].clone();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(temp_val, json!(42.0));
+    assert_eq!(
+        request(
+            st.addr,
+            "POST",
+            "/api/v1/control/tags/TEMP",
+            &admin,
+            json!({"value": 77}),
+            "X-NuriScada-Request: 1\r\n"
+        )
+        .await
+        .0,
+        200
+    );
+    assert_eq!(st.sim.state().holding_registers[1], 77);
+    assert!(
+        st.ops
+            .audit_page(0)
+            .unwrap()
+            .iter()
+            .any(|r| r["event"]["action"] == "project.update")
+    );
+    st.ops.verify_audit().unwrap();
 }

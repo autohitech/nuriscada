@@ -106,3 +106,14 @@ fn rejects_bad_projects() {
         Err(ConfigError::Parse(_))
     ));
 }
+
+#[test]
+fn round_trips_spec_and_toml() {
+    let original = Project::from_toml(GOOD).unwrap();
+    let spec = original.to_spec();
+    let from_spec = Project::from_spec(spec).unwrap();
+    assert_eq!(original, from_spec);
+    let toml_text = original.to_toml();
+    let reparsed = Project::from_toml(&toml_text).unwrap();
+    assert_eq!(original, reparsed);
+}
