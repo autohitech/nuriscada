@@ -454,7 +454,7 @@ async fn project_configuration_can_be_edited_and_reloaded_by_local_admin() {
         400
     );
 
-    // 새 아날로그 태그 TEMP(주소 1)를 추가하고 런타임 스캔이 반영되는지 확인한다.
+    // 새 아날로그 태그 TEMP(주소 1)와 그래픽 화면을 추가하고 런타임 스캔·화면 조회가 반영되는지 확인한다.
     st.sim.set_holding(1, &[42]);
     spec["tag"].as_array_mut().unwrap().push(json!({
         "name": "TEMP",
@@ -468,6 +468,23 @@ async fn project_configuration_can_be_edited_and_reloaded_by_local_admin() {
         "scale": { "plc_base": 0.0, "plc_full": 100.0, "base": 0.0, "full": 100.0, "profile": 0, "delay": 0, "range": 0 },
         "alarm": null
     }));
+    spec["screen"] = json!([{
+        "name": "온도 감시 화면",
+        "width": 800,
+        "height": 400,
+        "widget": [{
+            "id": "w-temp-tank",
+            "kind": "tank",
+            "label": "가열 탱크",
+            "tag": "TEMP",
+            "x": 40.0,
+            "y": 40.0,
+            "width": 160.0,
+            "height": 200.0,
+            "min": 0.0,
+            "max": 100.0
+        }]
+    }]);
     let (code, _, updated) = request(
         st.addr,
         "POST",
@@ -484,6 +501,11 @@ async fn project_configuration_can_be_edited_and_reloaded_by_local_admin() {
             .unwrap()
             .contains("name = \"TEMP\"")
     );
+    let (scode, _, screens_doc) =
+        request(st.addr, "GET", "/api/v1/screens", &operator, json!({}), "").await;
+    assert_eq!(scode, 200);
+    assert_eq!(screens_doc["screens"][0]["name"], "온도 감시 화면");
+    assert_eq!(screens_doc["screens"][0]["widget"][0]["tag"], "TEMP");
 
     // 스캐너 재시작 후 새 태그 값이 읽히고 쓰기도 동작하는지 확인한다.
     let mut temp_val = Value::Null;

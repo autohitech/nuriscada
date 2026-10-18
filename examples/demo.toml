@@ -32,3 +32,42 @@ space = "coil"
 address = 0
 type = "digital"
 alarm = { kind = 0 }
+
+[[screen]]
+name = "주 공정 화면"
+width = 800
+height = 360
+
+[[screen.widget]]
+id = "w-tank-1"
+kind = "tank"
+label = "원수 탱크 수위"
+tag = "TANK_LEVEL"
+x = 40.0
+y = 40.0
+width = 180.0
+height = 220.0
+min = 0.0
+max = 100.0
+
+[[screen.widget]]
+id = "w-pump-1"
+kind = "pump"
+label = "공급 펌프"
+tag = "PUMP_RUN"
+x = 260.0
+y = 90.0
+width = 160.0
+height = 120.0
+
+[[screen.widget]]
+id = "w-gauge-1"
+kind = "gauge"
+label = "수위 게이지"
+tag = "TANK_LEVEL"
+x = 460.0
+y = 90.0
+width = 180.0
+height = 120.0
+min = 0.0
+max = 100.0

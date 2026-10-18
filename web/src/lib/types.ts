@@ -101,10 +101,33 @@ export interface TagSpec {
   unit_text: string;
 }
 
+export type GraphicWidgetKind = "value" | "gauge" | "tank" | "lamp" | "pump" | "valve" | "label";
+
+export interface GraphicWidgetSpec {
+  id: string;
+  kind: GraphicWidgetKind;
+  label: string;
+  tag: string | null;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  min: number;
+  max: number;
+}
+
+export interface ScreenSpec {
+  name: string;
+  width: number;
+  height: number;
+  widget: GraphicWidgetSpec[];
+}
+
 export interface ProjectSpec {
   server: ServerSpec;
   device: DeviceSpec[];
   tag: TagSpec[];
+  screen?: ScreenSpec[];
 }
 
 export interface TagHistorySample {

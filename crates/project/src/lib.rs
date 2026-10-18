@@ -175,6 +175,8 @@ pub struct Project {
     pub devices: Vec<Device>,
     /// 태그 목록.
     pub tags: Vec<Tag>,
+    /// 그래픽 화면 목록.
+    pub screens: Vec<ScreenSpec>,
 }
 
 // ---- 파일·편집 형식 ----
@@ -192,6 +194,9 @@ pub struct ProjectSpec {
     /// 태그 목록.
     #[serde(default, rename = "tag")]
     pub tags: Vec<TagSpec>,
+    /// 그래픽 화면 목록.
+    #[serde(default, rename = "screen")]
+    pub screens: Vec<ScreenSpec>,
 }
 
 /// 편집·직렬화용 서버 설정.
@@ -323,6 +328,74 @@ pub struct AlarmSpec {
     /// 복귀 여유.
     #[serde(default)]
     pub gap: f64,
+}
+
+/// 그래픽 화면 명세.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScreenSpec {
+    /// 화면 이름(프로젝트 안에서 유일).
+    pub name: String,
+    /// 캔버스 가로 폭(px).
+    #[serde(default = "default_screen_width")]
+    pub width: u32,
+    /// 캔버스 세로 높이(px).
+    #[serde(default = "default_screen_height")]
+    pub height: u32,
+    /// 화면에 배치된 그래픽 위젯 목록.
+    #[serde(default, rename = "widget")]
+    pub widgets: Vec<GraphicWidgetSpec>,
+}
+
+fn default_screen_width() -> u32 {
+    800
+}
+
+fn default_screen_height() -> u32 {
+    480
+}
+
+/// 그래픽 화면 위젯 명세.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GraphicWidgetSpec {
+    /// 화면 안에서 유일한 위젯 식별자.
+    pub id: String,
+    /// 위젯 종류(`value`, `gauge`, `tank`, `lamp`, `pump`, `valve`, `label`).
+    pub kind: String,
+    /// 표시 이름.
+    #[serde(default)]
+    pub label: String,
+    /// 연결할 태그 이름(선택).
+    pub tag: Option<String>,
+    /// X 좌표.
+    pub x: f64,
+    /// Y 좌표.
+    pub y: f64,
+    /// 가로 크기.
+    #[serde(default = "default_widget_width")]
+    pub width: f64,
+    /// 세로 크기.
+    #[serde(default = "default_widget_height")]
+    pub height: f64,
+    /// 게이지·탱크 표시 하한.
+    #[serde(default)]
+    pub min: f64,
+    /// 게이지·탱크 표시 상한.
+    #[serde(default = "default_widget_max")]
+    pub max: f64,
+}
+
+fn default_widget_width() -> f64 {
+    160.0
+}
+
+fn default_widget_height() -> f64 {
+    110.0
+}
+
+fn default_widget_max() -> f64 {
+    100.0
 }
 
 fn parse_space(s: &str) -> Result<Space, ConfigError> {
@@ -532,6 +605,65 @@ impl Project {
             });
         }
 
+        let mut screens = Vec::new();
+        let mut screen_names = HashSet::new();
+        for mut s in raw.screens {
+            if s.name.trim().is_empty() || s.name.len() > 64 {
+                return invalid("화면 이름은 1~64자여야 한다");
+            }
+            if !screen_names.insert(s.name.clone()) {
+                return invalid(format!("화면 이름이 중복된다: {}", s.name));
+            }
+            if !(200..=3840).contains(&s.width) || !(120..=2160).contains(&s.height) {
+                return invalid(format!(
+                    "화면 `{}`: 크기는 200~3840 x 120~2160 범위여야 한다",
+                    s.name
+                ));
+            }
+            let mut widget_ids = HashSet::new();
+            for w in &mut s.widgets {
+                if w.id.trim().is_empty() || w.id.len() > 64 {
+                    return invalid(format!("화면 `{}`: 위젯 id는 1~64자여야 한다", s.name));
+                }
+                if !widget_ids.insert(w.id.clone()) {
+                    return invalid(format!("화면 `{}`: 위젯 id가 중복된다: {}", s.name, w.id));
+                }
+                if !matches!(
+                    w.kind.as_str(),
+                    "value" | "gauge" | "tank" | "lamp" | "pump" | "valve" | "label"
+                ) {
+                    return invalid(format!(
+                        "화면 `{}` 위젯 `{}`: 지원하지 않는 kind `{}`",
+                        s.name, w.id, w.kind
+                    ));
+                }
+                let wl = format!("화면 `{}` 위젯 `{}`", s.name, w.id);
+                check_finite(&wl, w.x)?;
+                check_finite(&wl, w.y)?;
+                check_finite(&wl, w.width)?;
+                check_finite(&wl, w.height)?;
+                check_finite(&wl, w.min)?;
+                check_finite(&wl, w.max)?;
+                if w.x < 0.0 || w.y < 0.0 || w.width < 20.0 || w.height < 20.0 {
+                    return invalid(format!("{wl}: 좌표는 0 이상이고 크기는 20 이상이어야 한다"));
+                }
+                if matches!(w.kind.as_str(), "gauge" | "tank") && w.max <= w.min {
+                    return invalid(format!("{wl}: max는 min보다 커야 한다"));
+                }
+                if let Some(tag_name) = &w.tag {
+                    let trimmed = tag_name.trim();
+                    if trimmed.is_empty() {
+                        w.tag = None;
+                    } else if !tag_names.contains(trimmed) {
+                        return invalid(format!("{wl}: 없는 태그 `{trimmed}`"));
+                    } else {
+                        w.tag = Some(trimmed.to_string());
+                    }
+                }
+            }
+            screens.push(s);
+        }
+
         if raw.server.publish_ms < MIN_PUBLISH_MS {
             return invalid(format!(
                 "방송 주기 {} ms는 최소 {MIN_PUBLISH_MS} ms보다 짧다",
@@ -545,6 +677,7 @@ impl Project {
             },
             devices,
             tags,
+            screens,
         })
     }
 
@@ -627,6 +760,7 @@ impl Project {
                     }
                 })
                 .collect(),
+            screens: self.screens.clone(),
         }
     }
 
@@ -697,6 +831,33 @@ impl Project {
                     fields.push(format!("gap = {}", toml_f64(a.gap)));
                 }
                 out.push_str(&format!("alarm = {{ {} }}\n", fields.join(", ")));
+            }
+        }
+        for s in &spec.screens {
+            out.push_str("\n[[screen]]\n");
+            out.push_str(&format!("name = {}\n", toml_str(&s.name)));
+            out.push_str(&format!("width = {}\n", s.width));
+            out.push_str(&format!("height = {}\n", s.height));
+            for w in &s.widgets {
+                out.push_str("\n[[screen.widget]]\n");
+                out.push_str(&format!("id = {}\n", toml_str(&w.id)));
+                out.push_str(&format!("kind = {}\n", toml_str(&w.kind)));
+                if !w.label.is_empty() {
+                    out.push_str(&format!("label = {}\n", toml_str(&w.label)));
+                }
+                if let Some(tag) = &w.tag {
+                    out.push_str(&format!("tag = {}\n", toml_str(tag)));
+                }
+                out.push_str(&format!("x = {}\n", toml_f64(w.x)));
+                out.push_str(&format!("y = {}\n", toml_f64(w.y)));
+                out.push_str(&format!("width = {}\n", toml_f64(w.width)));
+                out.push_str(&format!("height = {}\n", toml_f64(w.height)));
+                if w.min != 0.0 {
+                    out.push_str(&format!("min = {}\n", toml_f64(w.min)));
+                }
+                if w.max != 100.0 {
+                    out.push_str(&format!("max = {}\n", toml_f64(w.max)));
+                }
             }
         }
         out

@@ -149,6 +149,7 @@ pub struct HubSnapshot {
 
 struct Inner {
     tags: Vec<TagSnapshot>,
+    screens: Vec<nuriscada_project::ScreenSpec>,
     alarms: VecDeque<AlarmRecord>,
     next_seq: u64,
     devices: Vec<DeviceStatus>,
@@ -217,6 +218,7 @@ impl Hub {
         Arc::new(Self {
             inner: RwLock::new(Inner {
                 tags,
+                screens: project.screens.clone(),
                 alarms: VecDeque::new(),
                 next_seq: 1,
                 devices,
@@ -231,7 +233,7 @@ impl Hub {
         })
     }
 
-    /// 새 프로젝트 설정으로 태그·장치 목록을 재구성하고 전체 스냅샷을 방송한다.
+    /// 새 프로젝트 설정으로 태그·장치·화면 목록을 재구성하고 전체 스냅샷을 방송한다.
     ///
     /// 기존 최근 알람 기록과 알람 순번은 유지한다.
     pub fn reconfigure(&self, project: &Project) {
@@ -279,6 +281,7 @@ impl Hub {
         let snap = {
             let mut inner = self.write();
             inner.tags = tags;
+            inner.screens = project.screens.clone();
             inner.devices = devices;
             inner.jitter = jitter;
             inner.dirty.clear();
@@ -410,6 +413,11 @@ impl Hub {
     /// 모든 태그의 현재 상태.
     pub fn tags(&self) -> Vec<TagSnapshot> {
         self.read().tags.clone()
+    }
+
+    /// 프로젝트의 그래픽 화면 목록.
+    pub fn screens(&self) -> Vec<nuriscada_project::ScreenSpec> {
+        self.read().screens.clone()
     }
 
     /// 알람 상태가 정상이 아닌 아날로그 태그.
