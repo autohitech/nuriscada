@@ -1,0 +1,109 @@
+{
+  "cases": [
+    {
+      "case": "S_TN01",
+      "expect": [
+        "Library1"
+      ],
+      "siblings": [
+        "Library"
+      ],
+      "tries": [
+        "Library"
+      ]
+    },
+    {
+      "case": "S_TN02",
+      "expect": [
+        "Tag02"
+      ],
+      "siblings": [
+        "Tag01"
+      ],
+      "tries": [
+        "Tag01"
+      ]
+    },
+    {
+      "case": "S_TN03",
+      "expect": [
+        "Tag100"
+      ],
+      "siblings": [
+        "Tag99"
+      ],
+      "tries": [
+        "Tag99"
+      ]
+    },
+    {
+      "case": "S_TN04",
+      "expect": [
+        "T4"
+      ],
+      "siblings": [
+        "T1",
+        "T2",
+        "T3"
+      ],
+      "tries": [
+        "T1"
+      ]
+    },
+    {
+      "case": "S_TN05",
+      "expect": [
+        "Tag02Sub"
+      ],
+      "siblings": [
+        "Tag01Sub"
+      ],
+      "tries": [
+        "Tag01Sub"
+      ]
+    },
+    {
+      "case": "S_TN06",
+      "expect": [
+        "13"
+      ],
+      "siblings": [
+        "12"
+      ],
+      "tries": [
+        "12"
+      ]
+    },
+    {
+      "case": "S_TN07",
+      "expect": [
+        "AI_0001",
+        "AI_0002",
+        "AI_0003"
+      ],
+      "siblings": [
+        "AI_0000"
+      ],
+      "tries": [
+        "AI_0000",
+        "AI_0000",
+        "AI_0000"
+      ]
+    },
+    {
+      "case": "S_TN08",
+      "expect": [
+        "library1"
+      ],
+      "siblings": [
+        "LIBRARY"
+      ],
+      "tries": [
+        "library"
+      ]
+    }
+  ],
+  "group": "tag-name",
+  "note": "참조 구현의 예측이다. 원본 관측이 아니며 통과한 시험이 아니다.",
+  "status": "prediction"
+}

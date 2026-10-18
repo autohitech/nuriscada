@@ -1,0 +1,394 @@
+{
+  "cases": [
+    {
+      "case": "AL-1",
+      "expect": [
+        [],
+        [
+          "HIHI"
+        ],
+        [],
+        [
+          "CNF",
+          "RETURN"
+        ],
+        [
+          "LOLO"
+        ],
+        [],
+        [
+          "CNF",
+          "RETURN"
+        ]
+      ],
+      "input": [
+        50,
+        90,
+        86,
+        84,
+        10,
+        14,
+        16
+      ],
+      "kind": 0,
+      "params": {
+        "gap": 5,
+        "hihi": 90,
+        "lolo": 10
+      }
+    },
+    {
+      "case": "AL-2",
+      "expect": [
+        [],
+        [
+          "HIHI"
+        ],
+        [],
+        [
+          "CNF",
+          "RETURN"
+        ]
+      ],
+      "input": [
+        89.9,
+        90,
+        86,
+        84.9
+      ],
+      "kind": 1,
+      "params": {
+        "gap": 5,
+        "hihi": 90
+      }
+    },
+    {
+      "case": "AL-3",
+      "expect": [
+        [],
+        [
+          "LOLO"
+        ],
+        [],
+        [
+          "CNF",
+          "RETURN"
+        ]
+      ],
+      "input": [
+        10.1,
+        10,
+        14,
+        15.1
+      ],
+      "kind": 2,
+      "params": {
+        "gap": 5,
+        "lolo": 10
+      }
+    },
+    {
+      "case": "AL-4",
+      "expect": [
+        [
+          "HIGH"
+        ],
+        [],
+        [
+          "CNF",
+          "RETURN"
+        ],
+        [
+          "LOW"
+        ],
+        [],
+        [
+          "CNF",
+          "RETURN"
+        ]
+      ],
+      "input": [
+        70,
+        66,
+        64,
+        30,
+        34,
+        36
+      ],
+      "kind": 3,
+      "params": {
+        "gap": 5,
+        "high": 70,
+        "low": 30
+      }
+    },
+    {
+      "case": "AL-5",
+      "expect": [
+        [
+          "HIGH"
+        ],
+        [],
+        [
+          "CNF",
+          "RETURN"
+        ]
+      ],
+      "input": [
+        70,
+        66,
+        64
+      ],
+      "kind": 4,
+      "params": {
+        "gap": 5,
+        "high": 70
+      }
+    },
+    {
+      "case": "AL-6",
+      "expect": [
+        [
+          "LOW"
+        ],
+        [],
+        [
+          "CNF",
+          "RETURN"
+        ]
+      ],
+      "input": [
+        30,
+        34,
+        36
+      ],
+      "kind": 5,
+      "params": {
+        "gap": 5,
+        "low": 30
+      }
+    },
+    {
+      "case": "AL-7",
+      "expect": [
+        [
+          "HIHI"
+        ],
+        [
+          "HIGH"
+        ],
+        [],
+        [
+          "CNF",
+          "RETURN"
+        ],
+        [
+          "LOW"
+        ],
+        [],
+        [],
+        [
+          "CNF",
+          "RETURN"
+        ]
+      ],
+      "input": [
+        95,
+        80,
+        72,
+        64,
+        20,
+        28,
+        35,
+        40
+      ],
+      "kind": 6,
+      "params": {
+        "gap": 5,
+        "high": 70,
+        "hihi": 90,
+        "lolo": 10,
+        "low": 30
+      }
+    },
+    {
+      "case": "AL-8",
+      "expect": [
+        [
+          "LOLO"
+        ],
+        [
+          "LOW"
+        ],
+        [],
+        [
+          "CNF",
+          "RETURN"
+        ]
+      ],
+      "input": [
+        10,
+        20,
+        31,
+        40
+      ],
+      "kind": 6,
+      "params": {
+        "gap": 5,
+        "high": 70,
+        "hihi": 90,
+        "lolo": 10,
+        "low": 30
+      }
+    },
+    {
+      "case": "AL-9",
+      "expect": [
+        [
+          "HIHI"
+        ],
+        [
+          "HIGH"
+        ],
+        [
+          "CNF",
+          "RETURN"
+        ]
+      ],
+      "input": [
+        95,
+        80,
+        64
+      ],
+      "kind": 7,
+      "params": {
+        "gap": 5,
+        "high": 70,
+        "hihi": 90
+      }
+    },
+    {
+      "case": "AL-10",
+      "expect": [
+        [
+          "LOLO"
+        ],
+        [
+          "LOW"
+        ],
+        [
+          "CNF",
+          "RETURN"
+        ]
+      ],
+      "input": [
+        5,
+        20,
+        36
+      ],
+      "kind": 8,
+      "params": {
+        "gap": 5,
+        "lolo": 10,
+        "low": 30
+      }
+    },
+    {
+      "case": "AL-11",
+      "expect": [
+        [
+          "HIGH"
+        ],
+        [],
+        [
+          "RETURN"
+        ],
+        [
+          "HIGH"
+        ],
+        [
+          "RETURN"
+        ]
+      ],
+      "input": [
+        50,
+        50,
+        71,
+        30,
+        29
+      ],
+      "kind": 9,
+      "params": {
+        "high": 70,
+        "low": 30
+      }
+    },
+    {
+      "case": "AL-12",
+      "expect": [
+        [],
+        [
+          "DI_ON"
+        ],
+        [],
+        [
+          "RETURN"
+        ]
+      ],
+      "input": [
+        0,
+        1,
+        1,
+        0
+      ],
+      "kind": "DI0"
+    },
+    {
+      "case": "AL-13",
+      "expect": [
+        [
+          "RETURN"
+        ],
+        [
+          "DI_OFF"
+        ]
+      ],
+      "input": [
+        1,
+        0
+      ],
+      "kind": "DI1"
+    },
+    {
+      "case": "AL-14",
+      "expect": [
+        [],
+        [
+          "DI_OFF"
+        ]
+      ],
+      "input": [
+        1,
+        0
+      ],
+      "kind": "DI2"
+    },
+    {
+      "case": "AL-15",
+      "expect": [
+        [],
+        [
+          "DI_ON"
+        ]
+      ],
+      "input": [
+        0,
+        1
+      ],
+      "kind": "DI3"
+    }
+  ],
+  "group": "alarm",
+  "note": "참조 구현의 예측이다. 원본 관측이 아니며 통과한 시험이 아니다.",
+  "status": "prediction"
+}

@@ -1,0 +1,58 @@
+{
+  "cases": [
+    {
+      "case": "CT-W1",
+      "expect": "Name,\"a,b\",",
+      "fields": [
+        "Name",
+        "a,b"
+      ]
+    },
+    {
+      "case": "CT-W2",
+      "expect": "Name,\"he said \"\"hi\"\"\",",
+      "fields": [
+        "Name",
+        "he said \"hi\""
+      ]
+    },
+    {
+      "case": "CT-W3",
+      "expect": "Name,  x,",
+      "fields": [
+        "Name",
+        "  x"
+      ]
+    },
+    {
+      "case": "CT-W4",
+      "expect": "Name,한글 설명,",
+      "fields": [
+        "Name",
+        "한글 설명"
+      ]
+    },
+    {
+      "case": "CT-W5",
+      "expect": "Name,True,False,12,1.5,",
+      "fields": [
+        "Name",
+        true,
+        false,
+        12,
+        1.5
+      ]
+    },
+    {
+      "case": "CT-W6",
+      "expect": "Name,,",
+      "fields": [
+        "Name",
+        ""
+      ]
+    }
+  ],
+  "group": "comma-text-write",
+  "note": "참조 구현의 예측이다. 원본 관측이 아니며 통과한 시험이 아니다.",
+  "status": "prediction"
+}

@@ -1,0 +1,173 @@
+{
+  "cases": [
+    {
+      "case": "AI-1",
+      "expect": [
+        0.0,
+        250.0,
+        500.0,
+        1000.0
+      ],
+      "input": [
+        0,
+        25,
+        50,
+        100
+      ],
+      "params": {
+        "base": 0,
+        "full": 1000,
+        "plc_base": 0,
+        "plc_full": 100
+      }
+    },
+    {
+      "case": "AI-2",
+      "expect": [
+        0.0
+      ],
+      "input": [
+        5
+      ],
+      "params": {
+        "base": 0,
+        "full": 100,
+        "plc_base": 3,
+        "plc_full": 3
+      }
+    },
+    {
+      "case": "AI-3",
+      "expect": [
+        "-0",
+        -70.710678,
+        100.0,
+        70.710678,
+        0.0
+      ],
+      "input": [
+        0,
+        25,
+        50,
+        75,
+        100
+      ],
+      "params": {
+        "base": 0,
+        "flt": 1,
+        "full": 100,
+        "plc_base": 0,
+        "plc_full": 100
+      }
+    },
+    {
+      "case": "AI-4",
+      "expect": [
+        "-0",
+        -50.0,
+        200.0,
+        150.0,
+        100.0
+      ],
+      "input": [
+        0,
+        25,
+        50,
+        75,
+        100
+      ],
+      "params": {
+        "base": 0,
+        "flt": 3,
+        "full": 100,
+        "plc_base": 0,
+        "plc_full": 100
+      }
+    },
+    {
+      "case": "AI-5",
+      "expect": [
+        50.0,
+        75.0,
+        87.5,
+        43.75
+      ],
+      "input": [
+        100,
+        100,
+        100,
+        0
+      ],
+      "params": {
+        "base": 0,
+        "delay": 1,
+        "full": 100,
+        "plc_base": 0,
+        "plc_full": 100
+      }
+    },
+    {
+      "case": "AI-6",
+      "expect": [
+        25.0,
+        43.75,
+        57.8125
+      ],
+      "input": [
+        100,
+        100,
+        100
+      ],
+      "params": {
+        "base": 0,
+        "delay": 3,
+        "full": 100,
+        "plc_base": 0,
+        "plc_full": 100
+      }
+    },
+    {
+      "case": "AI-7",
+      "expect": [
+        0.0,
+        50.0,
+        100.0
+      ],
+      "input": [
+        -10,
+        50,
+        120
+      ],
+      "params": {
+        "base": 0,
+        "cut": 1,
+        "full": 100,
+        "plc_base": 0,
+        "plc_full": 100
+      }
+    },
+    {
+      "case": "AI-8",
+      "expect": [
+        "drop",
+        50.0,
+        "drop"
+      ],
+      "input": [
+        -10,
+        50,
+        120
+      ],
+      "params": {
+        "base": 0,
+        "cut": 2,
+        "full": 100,
+        "plc_base": 0,
+        "plc_full": 100
+      }
+    }
+  ],
+  "group": "ai-scaling",
+  "note": "참조 구현의 예측이다. 원본 관측이 아니며 통과한 시험이 아니다.",
+  "status": "prediction"
+}
