@@ -1,6 +1,7 @@
 # 시연용 프로젝트: `nuriscada-sim-modbus --demo`와 함께 쓴다.
 #   cargo run -p nuriscada-sim-modbus -- --demo
 #   cargo run -p nuriscada-server -- --config examples/demo.toml
+# 최초 실행 전에 --init-admin <계정>으로 관리자를 만든다. 쓰기는 --enable-writes로 별도 활성화한다.
 
 [server]
 listen = "127.0.0.1:8080"
@@ -14,6 +15,7 @@ scan_ms = 100
 
 [[tag]]
 name = "TANK_LEVEL"
+writable = true
 device = "sim"
 space = "holding"
 address = 0
@@ -24,6 +26,7 @@ alarm = { kind = 6, hihi = 90, high = 70, low = 30, lolo = 10, gap = 5 }
 
 [[tag]]
 name = "PUMP_RUN"
+writable = true
 device = "sim"
 space = "coil"
 address = 0

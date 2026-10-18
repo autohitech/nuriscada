@@ -45,6 +45,85 @@ pub struct ModbusTcpClient {
 }
 
 impl ModbusTcpClient {
+    /// 단일 코일(05) 또는 보유 레지스터(06)를 쓴다. 불명확한 결과를 자동 재시도하지 않는다.
+    pub async fn write_single(
+        &mut self,
+        unit: u8,
+        space: u16,
+        address: u16,
+        value: u16,
+    ) -> Result<(), DriverError> {
+        let (function, value) = match space {
+            SPACE_COILS if value <= 1 => (5, if value == 1 { 0xff00u16 } else { 0 }),
+            SPACE_HOLDING_REGISTERS => (6, value),
+            _ => {
+                return Err(DriverError::InvalidRequest(
+                    "코일 또는 보유 레지스터에만 쓸 수 있다".into(),
+                ));
+            }
+        };
+        if unit == 0 {
+            return Err(DriverError::InvalidRequest(
+                "쓰기에는 방송 유닛 0을 허용하지 않는다".into(),
+            ));
+        }
+        self.transaction = self.transaction.wrapping_add(1);
+        let mut frame = vec![];
+        frame.extend_from_slice(&self.transaction.to_be_bytes());
+        frame.extend_from_slice(&[0, 0, 0, 6, unit, function]);
+        frame.extend_from_slice(&address.to_be_bytes());
+        frame.extend_from_slice(&value.to_be_bytes());
+        let started = Instant::now();
+        let result = async {
+            self.connect().await?;
+            let stream = self.stream.as_mut().expect("연결 확인");
+            timeout(self.timeout, async {
+                stream
+                    .write_all(&frame)
+                    .await
+                    .map_err(|e| DriverError::Connection(e.to_string()))?;
+                let mut header = [0; MBAP_LEN];
+                stream
+                    .read_exact(&mut header)
+                    .await
+                    .map_err(|e| DriverError::Connection(e.to_string()))?;
+                let rest = remaining_after_header(&header)?;
+                let mut response = header.to_vec();
+                response.resize(MBAP_LEN + rest, 0);
+                stream
+                    .read_exact(&mut response[MBAP_LEN..])
+                    .await
+                    .map_err(|e| DriverError::Connection(e.to_string()))?;
+                if response[..2] != frame[..2] || response[6] != unit {
+                    return Err(DriverError::Protocol(
+                        "쓰기 응답 거래·유닛 식별자 불일치".into(),
+                    ));
+                }
+                if response.len() == 9 && response[7] == function | 0x80 {
+                    return Err(DriverError::Device {
+                        code: response[8],
+                        text: crate::protocol::exception_text(response[8]).into(),
+                    });
+                }
+                if response != frame {
+                    return Err(DriverError::Protocol("쓰기 응답이 요청과 다르다".into()));
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|_| DriverError::Timeout)?
+        }
+        .await;
+        if result.is_ok() {
+            self.status.requests_ok += 1;
+            self.status.last_round_trip = Some(started.elapsed());
+        } else {
+            self.status.requests_failed += 1;
+            self.drop_connection();
+        }
+        result
+    }
+
     /// 클라이언트를 만든다. `timeout`은 연결과 요청 한 번(송신과 수신)의 제한 시간이다.
     pub fn new(address: impl Into<String>, timeout: Duration) -> Self {
         Self {
