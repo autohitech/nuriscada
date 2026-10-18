@@ -460,6 +460,112 @@ pub(super) async fn update_project(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct ImportProjectRequest {
+    text: String,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    default_device: Option<String>,
+}
+
+pub(super) async fn import_project(
+    State(state): State<AppState>,
+    Extension(user): Extension<Principal>,
+    Extension(peer): Extension<Peer>,
+    headers: HeaderMap,
+    Json(input): Json<ImportProjectRequest>,
+) -> Result<Json<Value>> {
+    let ops = operations(&state)?;
+    if user.role != Role::Admin
+        || ops.public_read_only
+        || !peer.loopback
+        || state.guard.allowed_hosts.is_none()
+    {
+        return Err(error(
+            StatusCode::FORBIDDEN,
+            "프로젝트 가져오기는 로컬 관리자만 가능하다",
+        ));
+    }
+    let mode = input.mode.as_deref().unwrap_or("preview");
+    if !matches!(mode, "preview" | "merge" | "replace") {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "mode는 preview, merge, replace 중 하나여야 한다",
+        ));
+    }
+    let current = ops.project();
+    let base_spec = if mode == "replace" {
+        nuriscada_project::ProjectSpec {
+            server: current.to_spec().server,
+            devices: Vec::new(),
+            tags: Vec::new(),
+            screens: current.to_spec().screens,
+        }
+    } else {
+        current.to_spec()
+    };
+    let report = nuriscada_project::legacy::import_legacy_text(
+        Some(&base_spec),
+        &input.text,
+        input.default_device.as_deref(),
+    )
+    .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    let next = Arc::new(
+        nuriscada_project::Project::from_spec(report.project.clone())
+            .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?,
+    );
+    let apply = matches!(mode, "merge" | "replace");
+    if apply {
+        let _lock = ops.write_lock.lock().await;
+        let check = ops.clone();
+        let t = token(&headers).unwrap_or_default();
+        if blocking(move || check.authenticate(&t)).await?.is_none() || user.expires_ms <= now_ms()
+        {
+            return Err(error(StatusCode::UNAUTHORIZED, "세션이 만료되었다"));
+        }
+        let db = ops.clone();
+        let actor = user.username.clone();
+        let source = peer.source.clone();
+        let saved = Arc::clone(&next);
+        blocking(move || db.save_project(saved, &actor, &source)).await?;
+        let db2 = ops.clone();
+        let actor2 = user.username.clone();
+        let source2 = peer.source.clone();
+        let detail = json!({
+            "mode": mode,
+            "imported_devices": report.imported_devices,
+            "imported_tags": report.imported_tags,
+            "renamed_tags": report.renamed_tags.len(),
+            "modified_items": report.modified_items.len(),
+            "ignored_items": report.ignored_items.len(),
+            "unreadable_items": report.unreadable_items.len(),
+        });
+        blocking(move || {
+            db2.audit(Event {
+                actor: &actor2,
+                source: &source2,
+                action: "project.import",
+                target: "project",
+                detail,
+            })
+        })
+        .await?;
+        ops.stop_scanners().await;
+        state.hub.reconfigure(&next);
+        ops.attach_scanners(crate::start_scanners(&next, &state.hub))
+            .await;
+    }
+    Ok(Json(json!({
+        "ok": true,
+        "applied": apply,
+        "report": report,
+        "project": next.to_spec(),
+        "toml": next.to_toml(),
+    })))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct WriteValue {
     value: Value,
 }

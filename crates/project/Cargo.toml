@@ -16,3 +16,6 @@ nuriscada-core = { path = "../core" }
 nuriscada-driver-api = { path = "../driver-api" }
 serde = { workspace = true }
 toml = { version = "1", default-features = false, features = ["parse", "serde"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

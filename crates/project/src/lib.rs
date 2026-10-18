@@ -15,6 +15,8 @@ use nuriscada_core::scaling::{Profile, RangeMode, ScaleParams};
 use nuriscada_driver_api::DataKind;
 use serde::{Deserialize, Serialize};
 
+pub mod legacy;
+
 /// 지원하는 가장 짧은 스캔 주기(밀리초). 제품 목표는 100 ms이고 시험을 위해 더 짧은 값을 허용한다.
 pub const MIN_SCAN_MS: u64 = 10;
 /// 가장 짧은 방송 주기(밀리초).
