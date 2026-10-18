@@ -22,7 +22,8 @@ use axum::routing::get;
 use nuriscada_driver_api::{BlockData, Driver, DriverError, LinkStatus, ReadBlock};
 use nuriscada_driver_modbus_tcp::ModbusTcpClient;
 use nuriscada_project::{DriverConfig, Project};
-use nuriscada_scheduler::{Hub, PlanLimits, Update, plan, run_device};
+use nuriscada_scheduler::wire::encode_snapshot;
+use nuriscada_scheduler::{Hub, PlanLimits, plan, run_device};
 use serde_json::json;
 use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
@@ -73,7 +74,7 @@ impl Scanners {
 pub fn start_scanners(project: &Arc<Project>, hub: &Arc<Hub>) -> Scanners {
     let blocks = plan(project, PlanLimits::MODBUS);
     let (shutdown, rx) = watch::channel(false);
-    let mut tasks = Vec::new();
+    let mut tasks = vec![hub.spawn_publisher(project.server.publish, rx.clone())];
     for (index, device) in project.devices.iter().enumerate() {
         let driver = match &device.driver {
             DriverConfig::ModbusTcp { address } => {
@@ -306,36 +307,55 @@ async fn status(State(s): State<AppState>) -> Json<serde_json::Value> {
     }))
 }
 
-fn snapshot_message(hub: &Hub) -> Message {
-    let body = json!({
-        "type": "snapshot",
-        "data": { "tags": hub.tags(), "active": hub.active_alarms(), "recent": hub.recent_alarms() },
-    });
-    Message::Text(body.to_string().into())
+/// 큰 스냅샷을 복사·부호화하는 동안 비동기 스캔 작업을 막지 않는다.
+async fn snapshot_message(hub: &Arc<Hub>) -> Result<(Message, u64), tokio::task::JoinError> {
+    // 동시 접속이 몰려도 큰 스냅샷을 복사·부호화하는 작업 수를 제한한다.
+    static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+    let permit = SLOTS.acquire().await.expect("스냅샷 세마포어");
+    let hub = Arc::clone(hub);
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let snap = hub.snapshot();
+        let seq = snap.seq;
+        (Message::Text(encode_snapshot(&snap).into()), seq)
+    })
+    .await
 }
 
 async fn stream(ws: WebSocketUpgrade, State(s): State<AppState>) -> Response {
     ws.on_upgrade(move |socket| push_updates(socket, s.hub))
 }
 
-/// 연결할 때 전체 스냅샷을 보내고, 이후 변경된 항목만 밀어 보낸다.
+/// 연결할 때 전체 스냅샷을 보내고, 이후 변경 묶음과 알람 기록을 밀어 보낸다.
+///
+/// 스냅샷보다 먼저 구독하고, 스냅샷에 이미 반영된 묶음(순번이 같거나 작은 것)은 버린다.
+/// 그래서 연결 직후의 변경을 놓치지도, 오래된 값으로 되돌리지도 않는다.
 async fn push_updates(mut socket: WebSocket, hub: Arc<Hub>) {
-    // 스냅샷보다 먼저 구독해서 그 사이의 변경을 놓치지 않는다.
-    let mut rx = hub.subscribe();
-    if socket.send(snapshot_message(&hub)).await.is_err() {
+    let mut rx = hub.subscribe_wire();
+    let Ok((first, mut covered)) = snapshot_message(&hub).await else {
+        return;
+    };
+    if socket.send(first).await.is_err() {
         return;
     }
     loop {
         tokio::select! {
-            update = rx.recv() => match update {
-                Ok(update) => {
-                    if send_update(&mut socket, &update).await.is_err() {
+            frame = rx.recv() => match frame {
+                Ok(frame) => {
+                    if frame.seq.is_some_and(|seq| seq <= covered) {
+                        continue;
+                    }
+                    if socket.send(Message::Text(frame.text.as_ref().into())).await.is_err() {
                         return;
                     }
                 }
                 // 너무 느려서 일부를 놓쳤다: 전체 스냅샷으로 다시 맞춘다.
                 Err(broadcast::error::RecvError::Lagged(_)) => {
-                    if socket.send(snapshot_message(&hub)).await.is_err() {
+                    let Ok((msg, seq)) = snapshot_message(&hub).await else {
+                        return;
+                    };
+                    covered = seq;
+                    if socket.send(msg).await.is_err() {
                         return;
                     }
                 }
@@ -347,11 +367,6 @@ async fn push_updates(mut socket: WebSocket, hub: Arc<Hub>) {
             },
         }
     }
-}
-
-async fn send_update(socket: &mut WebSocket, update: &Update) -> Result<(), axum::Error> {
-    let text = serde_json::to_string(update).unwrap_or_default();
-    socket.send(Message::Text(text.into())).await
 }
 
 #[cfg(test)]

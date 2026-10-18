@@ -5,19 +5,21 @@
 
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nuriscada_driver_api::{LinkState, LinkStatus};
 use nuriscada_project::{Project, TagBody};
 use serde::Serialize;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
+use tokio::task::JoinHandle;
 
 use crate::jitter::JitterStats;
 
 /// 보관하는 최근 알람 기록 수.
 pub const ALARM_LOG_CAPACITY: usize = 1000;
-/// 업데이트 방송 채널의 용량. 느린 수신자는 일부를 놓치고 전체 스냅샷을 다시 받는다.
-const BROADCAST_CAPACITY: usize = 4096;
+/// 선(wire) 방송 채널의 용량(프레임 수). 프레임은 주기마다 한 개 정도라 작아도 충분하다.
+/// 느린 수신자는 일부를 놓치고 전체 스냅샷을 다시 받는다.
+const BROADCAST_CAPACITY: usize = 256;
 
 /// 지금 시각(UTC, 1970년부터의 밀리초).
 pub fn now_ms() -> u64 {
@@ -109,14 +111,40 @@ pub struct DeviceStatus {
     pub last_error: Option<String>,
 }
 
-/// 방송하는 업데이트.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(tag = "type", content = "data", rename_all = "lowercase")]
-pub enum Update {
-    /// 태그 상태 변화.
-    Tag(TagSnapshot),
-    /// 새 알람 기록.
-    Alarm(AlarmRecord),
+/// 방송하는 프레임 하나. 이미 부호화되어 있어 모든 수신자가 같은 문자열을 공유한다.
+#[derive(Debug, Clone)]
+pub struct Frame {
+    /// 태그 묶음이면 그 순번. 알람 기록이면 `None`.
+    pub seq: Option<u64>,
+    /// JSON 문자열.
+    pub text: Arc<str>,
+}
+
+/// 마지막 방송 이후 바뀐 태그들의 묶음. 한 주기에 하나만 만든다.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Batch {
+    /// 방송 순번(1부터, 빈 묶음은 만들지 않으므로 건너뛰지 않는다).
+    pub seq: u64,
+    /// 묶음을 만든 시각(UTC 밀리초). 묶음 안 태그의 변경 시각으로도 쓴다.
+    pub time_ms: u64,
+    /// 바뀐 태그: (태그 목록에서의 위치, 값, 품질, 알람 상태). 값이 없으면 `None`이다.
+    pub items: Vec<BatchItem>,
+}
+
+/// 묶음 안의 태그 하나.
+pub type BatchItem = (usize, Option<TagValue>, Quality, Option<&'static str>);
+
+/// 허브의 일관된 전체 상태. 새로 연결한 수신자가 맞추는 기준이다.
+#[derive(Debug, Clone)]
+pub struct HubSnapshot {
+    /// 이 상태에 반영된 마지막 묶음의 순번. 이보다 작거나 같은 묶음은 이미 반영되어 있다.
+    pub seq: u64,
+    /// 모든 태그.
+    pub tags: Vec<TagSnapshot>,
+    /// 알람 상태가 정상이 아닌 태그.
+    pub active: Vec<TagSnapshot>,
+    /// 최근 알람 기록.
+    pub recent: Vec<AlarmRecord>,
 }
 
 struct Inner {
@@ -125,12 +153,19 @@ struct Inner {
     next_seq: u64,
     devices: Vec<DeviceStatus>,
     jitter: Vec<JitterStats>,
+    /// 마지막 방송 이후 바뀐 태그 위치.
+    dirty: Vec<usize>,
+    is_dirty: Vec<bool>,
+    publish_seq: u64,
+    /// 아직 방송하지 않은 가장 오래된 알람 기록의 순번.
+    alarm_cursor: u64,
 }
 
 /// 값·알람·상태 허브.
 pub struct Hub {
     inner: RwLock<Inner>,
-    tx: broadcast::Sender<Update>,
+    /// 이미 부호화한 프레임(JSON 문자열)의 방송. 한 번만 부호화해 모든 수신자가 공유한다.
+    wire: broadcast::Sender<Frame>,
     started: Instant,
 }
 
@@ -177,7 +212,8 @@ impl Hub {
             })
             .collect();
         let jitter = project.devices.iter().map(|_| JitterStats::new()).collect();
-        let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
+        let (wire, _) = broadcast::channel(BROADCAST_CAPACITY);
+        let tag_count = project.tags.len();
         Arc::new(Self {
             inner: RwLock::new(Inner {
                 tags,
@@ -185,8 +221,12 @@ impl Hub {
                 next_seq: 1,
                 devices,
                 jitter,
+                dirty: Vec::new(),
+                is_dirty: vec![false; tag_count],
+                publish_seq: 0,
+                alarm_cursor: 1,
             }),
-            tx,
+            wire,
             started: Instant::now(),
         })
     }
@@ -199,9 +239,101 @@ impl Hub {
         self.inner.write().expect("허브 잠금")
     }
 
-    /// 업데이트를 구독한다.
-    pub fn subscribe(&self) -> broadcast::Receiver<Update> {
-        self.tx.subscribe()
+    /// 부호화된 프레임(태그 묶음, 알람 기록)을 구독한다. 연결 상태를 맞추려면 **먼저 구독한 뒤**
+    /// [`Hub::snapshot`]을 가져와야 하고, 순번이 스냅샷 이하인 묶음은 버려야 한다(서버가 한다).
+    pub fn subscribe_wire(&self) -> broadcast::Receiver<Frame> {
+        self.wire.subscribe()
+    }
+
+    /// 일관된 전체 상태(한 번의 잠금 안에서 읽는다).
+    pub fn snapshot(&self) -> HubSnapshot {
+        let inner = self.read();
+        HubSnapshot {
+            seq: inner.publish_seq,
+            tags: inner.tags.clone(),
+            active: inner
+                .tags
+                .iter()
+                .filter(|t| matches!(t.alarm_state, Some(s) if s != "NORMAL"))
+                .cloned()
+                .collect(),
+            recent: inner.alarms.iter().cloned().collect(),
+        }
+    }
+
+    /// 마지막 방송 이후 바뀐 태그를 묶음으로 꺼낸다. 바뀐 것이 없으면 `None`이다.
+    pub fn drain_changes(&self) -> Option<Batch> {
+        let mut inner = self.write();
+        if inner.dirty.is_empty() {
+            return None;
+        }
+        let dirty = std::mem::take(&mut inner.dirty);
+        let items = dirty
+            .into_iter()
+            .map(|i| {
+                inner.is_dirty[i] = false;
+                let t = &inner.tags[i];
+                (i, t.value, t.quality, t.alarm_state)
+            })
+            .collect();
+        inner.publish_seq += 1;
+        Some(Batch {
+            seq: inner.publish_seq,
+            time_ms: now_ms(),
+            items,
+        })
+    }
+
+    /// 마지막 방송 이후 생긴 알람 기록(오래된 것부터). 최근 기록 한도를 넘어 밀려난 것은 포함하지 못한다.
+    pub fn drain_alarms(&self) -> Vec<AlarmRecord> {
+        let mut inner = self.write();
+        let from = inner.alarm_cursor;
+        let mut out: Vec<AlarmRecord> = inner
+            .alarms
+            .iter()
+            .rev()
+            .take_while(|r| r.seq >= from)
+            .cloned()
+            .collect();
+        out.reverse();
+        inner.alarm_cursor = inner.next_seq;
+        out
+    }
+
+    /// 변경 묶음과 알람 기록을 주기마다 부호화해 방송하는 작업을 시작한다. `shutdown`이 `true`가 되면 끝난다.
+    pub fn spawn_publisher(
+        self: &Arc<Self>,
+        interval: Duration,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> JoinHandle<()> {
+        let hub = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(interval);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => {
+                        let alarms = hub.drain_alarms();
+                        if !alarms.is_empty() {
+                            let _ = hub.wire.send(Frame {
+                                seq: None,
+                                text: crate::wire::encode_alarms(&alarms).into(),
+                            });
+                        }
+                        if let Some(batch) = hub.drain_changes() {
+                            let _ = hub.wire.send(Frame {
+                                seq: Some(batch.seq),
+                                text: crate::wire::encode_batch(&batch).into(),
+                            });
+                        }
+                    }
+                    _ = shutdown.changed() => {}
+                }
+                if *shutdown.borrow() {
+                    return;
+                }
+            }
+        })
     }
 
     /// 서버가 시작된 뒤 흐른 초.
@@ -234,7 +366,8 @@ impl Hub {
         self.read().devices.clone()
     }
 
-    /// 태그 상태를 갱신한다. 값·품질·알람 상태 중 바뀐 것이 있을 때만 방송한다.
+    /// 태그 상태를 갱신한다. 값·품질·알람 상태 중 바뀐 것이 있을 때만 변경으로 표시한다.
+    /// 변경은 [`Hub::drain_changes`]가 묶어 방송한다.
     pub(crate) fn set_tag(
         &self,
         index: usize,
@@ -242,21 +375,21 @@ impl Hub {
         quality: Quality,
         alarm_state: Option<&'static str>,
     ) {
-        let update = {
-            let mut inner = self.write();
-            let tag = &mut inner.tags[index];
-            let new_value = value.or(tag.value);
-            let new_state = alarm_state.or(tag.alarm_state);
-            if tag.value == new_value && tag.quality == quality && tag.alarm_state == new_state {
-                return;
-            }
-            tag.value = new_value;
-            tag.quality = quality;
-            tag.alarm_state = new_state;
-            tag.changed_ms = now_ms();
-            tag.clone()
-        };
-        let _ = self.tx.send(Update::Tag(update));
+        let mut inner = self.write();
+        let tag = &mut inner.tags[index];
+        let new_value = value.or(tag.value);
+        let new_state = alarm_state.or(tag.alarm_state);
+        if tag.value == new_value && tag.quality == quality && tag.alarm_state == new_state {
+            return;
+        }
+        tag.value = new_value;
+        tag.quality = quality;
+        tag.alarm_state = new_state;
+        tag.changed_ms = now_ms();
+        if !inner.is_dirty[index] {
+            inner.is_dirty[index] = true;
+            inner.dirty.push(index);
+        }
     }
 
     /// 태그를 읽을 수 없는 상태(품질 Bad)로 표시한다. 마지막 값은 유지한다.
@@ -264,25 +397,21 @@ impl Hub {
         self.set_tag(index, None, Quality::Bad, None);
     }
 
-    /// 알람 기록을 추가한다.
+    /// 알람 기록을 추가한다. 방송은 주기마다 묶어서 한다([`Hub::drain_alarms`]).
     pub(crate) fn push_alarm(&self, tag: &str, event: &'static str, value: f64) {
-        let record = {
-            let mut inner = self.write();
-            let record = AlarmRecord {
-                seq: inner.next_seq,
-                time_ms: now_ms(),
-                tag: tag.to_string(),
-                event,
-                value,
-            };
-            inner.next_seq += 1;
-            if inner.alarms.len() == ALARM_LOG_CAPACITY {
-                inner.alarms.pop_front();
-            }
-            inner.alarms.push_back(record.clone());
-            record
+        let mut inner = self.write();
+        let record = AlarmRecord {
+            seq: inner.next_seq,
+            time_ms: now_ms(),
+            tag: tag.to_string(),
+            event,
+            value,
         };
-        let _ = self.tx.send(Update::Alarm(record));
+        inner.next_seq += 1;
+        if inner.alarms.len() == ALARM_LOG_CAPACITY {
+            inner.alarms.pop_front();
+        }
+        inner.alarms.push_back(record);
     }
 
     /// 스캔 한 번을 기록한다.

@@ -56,3 +56,68 @@ jobs:
         run: npm run build
       - name: 의존성 라이선스 검사
         run: npm run licenses
+
+  load:
+    name: 부하 측정 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: 측정 도구 빌드
+        id: load_build
+        run: cargo build --locked --release -p nuriscada-bench
+      - name: 태그 1만 개·클라이언트 50개·100 ms 측정
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo run --locked --release -p nuriscada-bench -- --tags 10000 --clients 50 --devices 10 --scan-ms 100 --change-pct 10 --duration-s 60 --check --json | tee load.json
+      - name: 측정 결과 보관
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-${{ matrix.os }}
+          path: load.json
+          if-no-files-found: warn
+      - name: 장기 시험 기록 도구 점검 (Linux·macOS)
+        if: always() && runner.os != 'Windows' && steps.load_build.outcome == 'success'
+        run: python3 scripts/soak.py --duration-s 10 --sample-s 2 --output soak-smoke
+      - name: 장기 시험 도구 점검 기록 보관
+        if: always() && runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-smoke-${{ matrix.os }}
+          path: |
+            soak-smoke/status.json
+            soak-smoke/samples.jsonl
+            soak-smoke/stdout.json
+            soak-smoke/stderr.log
+          if-no-files-found: warn
+
+  sbom:
+    name: 의존성 목록 (SBOM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Rust SBOM 도구 설치
+        run: cargo install cargo-cyclonedx --version 0.5.9 --locked
+      - name: Rust 전체 대상 의존성 목록
+        run: cargo cyclonedx --format json --spec-version 1.5 --target all
+      - name: 웹 빌드 의존성 목록
+        working-directory: web
+        run: npm sbom --package-lock-only --sbom-format cyclonedx > web.cdx.json
+      - name: 의존성 목록 보관
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: |
+            crates/**/*.cdx.json
+            web/web.cdx.json
+          if-no-files-found: error

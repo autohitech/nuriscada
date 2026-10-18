@@ -311,6 +311,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "nuriscada-bench"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "futures-util",
+ "nuriscada-project",
+ "nuriscada-scheduler",
+ "nuriscada-server",
+ "nuriscada-sim-modbus",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+]
+
+[[package]]
 name = "nuriscada-core"
 version = "0.0.0"
 dependencies = [
@@ -349,6 +364,7 @@ dependencies = [
  "nuriscada-driver-api",
  "nuriscada-project",
  "serde",
+ "serde_json",
  "tokio",
 ]
 
