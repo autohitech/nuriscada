@@ -4,6 +4,8 @@
 
 ## 1. 비공개 취약점 신고 켜기 (필수)
 
+> **상태: 켜짐**(2026-10-18, `gh api repos/autohitech/nuriscada/private-vulnerability-reporting`가 `{"enabled":true}`). 아래 확인 단계(시험 신고, 알림 담당자 2명)는 아직 하지 않았다.
+
 [SECURITY.md](../SECURITY.md)가 신고자에게 "Security 탭의 Report a vulnerability"를 쓰라고 안내합니다. 이 기능을 켜지 않으면 비공개로 받을 곳이 없어서 신고자가 공개 이슈로 올릴 수 있습니다.
 
 **웹 화면**
@@ -58,7 +60,7 @@ gh api repos/autohitech/nuriscada/private-vulnerability-reporting   # {"enabled"
 | 1 | 첫 동작 수직 조각 + 성능 측정 | 충족 |
 | 2 | 이름 충돌 확인(OD-6) | 1차 조회 완료(충돌 없음). 공식 상표 데이터베이스 조회는 전문가 의뢰 필요 |
 | 3 | 책임 제한·코덱 법무 확인(OD-8) | 검토 의뢰서 준비 완료, 답변 대기 |
-| 4 | `SECURITY.md`와 비공개 취약점 신고 기능 | 문서 있음. **기능 활성화는 이 문서 1번대로 해야 함** |
+| 4 | `SECURITY.md`와 비공개 취약점 신고 기능 | 문서 있음. **기능 활성화 완료**(2026-10-18, `gh api`로 `enabled: true` 확인). 시험 신고와 알림 담당자 2명 지정은 아직 확인하지 않았다 |
 | 5 | 금지 패턴 검사와 이력 점검 | 완료(26개 커밋 전체 검사, 기존 제품 흔적 없음) |
 | 6 | 의존성 라이선스 검사와 SBOM(CI) | 충족 |
 | 7 | 안전 고지·보증 부인이 README 첫 화면에 있음 | 충족 |
