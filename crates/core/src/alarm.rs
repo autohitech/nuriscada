@@ -22,6 +22,20 @@ pub enum Status {
     Middle,
 }
 
+impl Status {
+    /// 표시용 이름.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "NORMAL",
+            Self::Lolo => "LOLO",
+            Self::Low => "LOW",
+            Self::High => "HIGH",
+            Self::Hihi => "HIHI",
+            Self::Middle => "MIDDLE",
+        }
+    }
+}
+
 /// 알람 기록의 종류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {

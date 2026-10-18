@@ -1,0 +1,31 @@
+# 시연용 프로젝트: `nuriscada-sim-modbus --demo`와 함께 쓴다.
+#   cargo run -p nuriscada-sim-modbus -- --demo
+#   cargo run -p nuriscada-server -- --config examples/demo.toml
+
+[server]
+listen = "127.0.0.1:8080"
+
+[[device]]
+name = "sim"
+driver = "modbus-tcp"
+address = "127.0.0.1:5020"
+timeout_ms = 500
+scan_ms = 100
+
+[[tag]]
+name = "TANK_LEVEL"
+device = "sim"
+space = "holding"
+address = 0
+type = "analog"
+unit_text = "%"
+scale = { plc_base = 0, plc_full = 100, base = 0, full = 100 }
+alarm = { kind = 6, hihi = 90, high = 70, low = 30, lolo = 10, gap = 5 }
+
+[[tag]]
+name = "PUMP_RUN"
+device = "sim"
+space = "coil"
+address = 0
+type = "digital"
+alarm = { kind = 0 }

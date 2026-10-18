@@ -1,6 +1,6 @@
 [package]
 name = "nuriscada-server"
-description = "REST·웹소켓 서버."
+description = "REST·웹소켓 서버와 실행 파일."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,5 +12,17 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-nuriscada-core = { path = "../core" }
+nuriscada-driver-api = { path = "../driver-api" }
+nuriscada-driver-modbus-tcp = { path = "../driver-modbus-tcp" }
+nuriscada-project = { path = "../project" }
 nuriscada-scheduler = { path = "../scheduler" }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "ws"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+
+[dev-dependencies]
+nuriscada-sim-modbus = { path = "../sim-modbus" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

@@ -25,6 +25,16 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+### 시연 실행
+
+```sh
+cargo run -p nuriscada-sim-modbus -- --demo          # MODBUS TCP 시뮬레이터
+cargo run -p nuriscada-server -- --config examples/demo.toml
+curl http://127.0.0.1:8080/api/v1/tags
+```
+
+서버는 기본적으로 루프백에서만 수신한다. 인증이 없는 초기 버전이므로 외부에 노출하지 마세요.
+
 ## 방향
 
 - 처음부터 새로 만든다. 기존 제품의 코드와 자산을 가져오지 않는다.

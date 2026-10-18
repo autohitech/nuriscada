@@ -1,0 +1,18 @@
+[package]
+name = "nuriscada-project"
+description = "프로젝트 설정(장치와 태그)의 읽기와 검증. 슬라이스용 TOML 형식."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nuriscada-core = { path = "../core" }
+nuriscada-driver-api = { path = "../driver-api" }
+serde = { workspace = true }
+toml = { version = "1", default-features = false, features = ["parse", "serde"] }

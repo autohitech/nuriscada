@@ -1,6 +1,6 @@
 [package]
 name = "nuriscada-scheduler"
-description = "주기 스캔 스케줄러와 지터 계측."
+description = "주기 스캔 스케줄러, 값 엔진, 지터 계측, 값·알람 허브."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,3 +14,9 @@ workspace = true
 [dependencies]
 nuriscada-core = { path = "../core" }
 nuriscada-driver-api = { path = "../driver-api" }
+nuriscada-project = { path = "../project" }
+serde = { workspace = true }
+tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "time", "sync", "macros", "test-util"] }
