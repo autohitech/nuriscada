@@ -2,6 +2,7 @@
 <!-- Copyright NuriScada contributors -->
 <script lang="ts">
   import AlarmPanel from "./components/AlarmPanel.svelte";
+  import GraphicScreen from "./components/GraphicScreen.svelte";
   import StatusBar from "./components/StatusBar.svelte";
   import TagTable from "./components/TagTable.svelte";
   import { Store, connect, pollStatus } from "./lib/store.svelte";
@@ -14,7 +15,11 @@
 
   const store = new Store();
   let session = $state<SessionDoc | null>(null);
+  let viewMode = $state<"split" | "graphic" | "table">("split");
   const canRead = $derived(!!session && (!session.authentication_required || !!session.user));
+  const canEditGraphic = $derived(
+    !!session && !!session.local_management && session.user?.role === "admin"
+  );
 
   function loadTheme(): Theme {
     try {
@@ -57,7 +62,19 @@
   {#if canRead}<StatusBar {store} {theme} onTheme={nextTheme} />{:else}<header class="welcome">NuriScada</header>{/if}
   <OperationsPanel onSession={(s) => session = s} />
   {#if canRead}<main>
-    <TagTable {store} />
+    <div class="workspace-col">
+      <div class="view-mode-bar" role="toolbar" aria-label="화면 표시 방식">
+        <button type="button" class:active={viewMode === "split"} onclick={() => viewMode = "split"}>그래픽 + 태그 표</button>
+        <button type="button" class:active={viewMode === "graphic"} onclick={() => viewMode = "graphic"}>그래픽 화면만</button>
+        <button type="button" class:active={viewMode === "table"} onclick={() => viewMode = "table"}>태그 표만</button>
+      </div>
+      {#if viewMode !== "table"}
+        <GraphicScreen {store} canEdit={canEditGraphic} />
+      {/if}
+      {#if viewMode !== "graphic"}
+        <TagTable {store} />
+      {/if}
+    </div>
     <AlarmPanel {store} />
   </main>{:else}<main class="welcome"><p>로그인하면 실시간 값과 알람을 볼 수 있습니다.</p></main>{/if}
   <footer>{ko.safetyNotice}</footer>
@@ -73,6 +90,33 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) 340px;
     min-height: 0;
+  }
+  .workspace-col {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .view-mode-bar {
+    display: flex;
+    gap: 6px;
+    padding: 6px 14px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .view-mode-bar button {
+    font: inherit;
+    font-size: 12px;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-2);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .view-mode-bar button.active {
+    border-color: var(--accent, #4ea1ff);
+    font-weight: 600;
   }
   .welcome { display: block; padding: 24px; color: var(--muted); }
   footer {

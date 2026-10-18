@@ -109,11 +109,36 @@ fn rejects_bad_projects() {
 
 #[test]
 fn round_trips_spec_and_toml() {
-    let original = Project::from_toml(GOOD).unwrap();
+    let with_screen = format!(
+        r#"{GOOD}
+[[screen]]
+name = "주 공정"
+width = 800
+height = 480
+
+[[screen.widget]]
+id = "w1"
+kind = "tank"
+label = "수위 탱크"
+tag = "TANK_LEVEL"
+x = 40.0
+y = 50.0
+width = 180.0
+height = 200.0
+min = 0.0
+max = 100.0
+"#
+    );
+    let original = Project::from_toml(&with_screen).unwrap();
+    assert_eq!(original.screens.len(), 1);
+    assert_eq!(original.screens[0].widgets.len(), 1);
     let spec = original.to_spec();
     let from_spec = Project::from_spec(spec).unwrap();
     assert_eq!(original, from_spec);
     let toml_text = original.to_toml();
     let reparsed = Project::from_toml(&toml_text).unwrap();
     assert_eq!(original, reparsed);
+
+    let unknown_tag = with_screen.replace("tag = \"TANK_LEVEL\"", "tag = \"MISSING_TAG\"");
+    assert!(err(&unknown_tag).contains("없는 태그"));
 }

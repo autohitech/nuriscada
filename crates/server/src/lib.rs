@@ -236,6 +236,7 @@ fn build_router(
                 .layer(axum::extract::DefaultBodyLimit::max(262_144)),
         )
         .route("/api/v1/tags", get(tags))
+        .route("/api/v1/screens", get(screens))
         .route("/api/v1/alarms", get(alarms))
         .route("/api/v1/status", get(status))
         .route("/api/v1/stream", get(stream))
@@ -351,6 +352,10 @@ async fn static_files(State(s): State<AppState>, uri: Uri) -> Response {
 
 async fn tags(State(s): State<AppState>) -> Json<serde_json::Value> {
     Json(json!({ "tags": s.hub.tags() }))
+}
+
+async fn screens(State(s): State<AppState>) -> Json<serde_json::Value> {
+    Json(json!({ "screens": s.hub.screens() }))
 }
 
 async fn alarms(State(s): State<AppState>) -> Json<serde_json::Value> {
