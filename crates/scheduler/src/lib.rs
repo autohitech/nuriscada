@@ -10,7 +10,11 @@ pub mod hub;
 pub mod jitter;
 pub mod plan;
 pub mod runner;
+pub mod wire;
 
-pub use hub::{AlarmRecord, DeviceStatus, Hub, Quality, TagSnapshot, TagValue, Update, now_ms};
+pub use hub::{
+    AlarmRecord, Batch, BatchItem, DeviceStatus, Frame, Hub, HubSnapshot, Quality, TagSnapshot,
+    TagValue, now_ms,
+};
 pub use plan::{PlanLimits, PlannedBlock, plan};
 pub use runner::run_device;

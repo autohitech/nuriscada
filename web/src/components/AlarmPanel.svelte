@@ -8,8 +8,12 @@
 
   let { store }: { store: Store } = $props();
 
+  /** 활성 알람은 화면에 이만큼만 그리고 나머지는 건수로 알린다(알람 폭주 때 화면이 느려지지 않게). */
+  const ACTIVE_VISIBLE = 100;
+
   const active = $derived(
     store.activeNames
+      .slice(0, ACTIVE_VISIBLE)
       .map((n) => store.indexOf(n))
       .filter((i): i is number => i !== undefined)
       .map((i) => store.tags[i])
@@ -28,8 +32,8 @@
   <p class="sr-only" role="status" aria-live="assertive">{announcement}</p>
 
   <section>
-    <h2>{ko.activeAlarms} <span class="count">{active.length}</span></h2>
-    {#if active.length === 0}
+    <h2>{ko.activeAlarms} <span class="count">{store.activeNames.length}</span></h2>
+    {#if store.activeNames.length === 0}
       <p class="empty">{ko.noAlarms}</p>
     {:else}
       <ul>
@@ -44,6 +48,9 @@
           </li>
         {/each}
       </ul>
+      {#if store.activeNames.length > ACTIVE_VISIBLE}
+        <p class="empty">{ko.moreAlarms(store.activeNames.length - ACTIVE_VISIBLE)}</p>
+      {/if}
     {/if}
   </section>
 

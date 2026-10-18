@@ -8,6 +8,7 @@ use nuriscada_project::{ConfigError, Project, Space, TagBody};
 const GOOD: &str = r#"
 [server]
 listen = "127.0.0.1:9000"
+publish_ms = 50
 
 [[device]]
 name = "sim"
@@ -45,6 +46,7 @@ fn err(text: &str) -> String {
 fn parses_a_valid_project() {
     let p = Project::from_toml(GOOD).unwrap();
     assert_eq!(p.server.listen, "127.0.0.1:9000");
+    assert_eq!(p.server.publish.as_millis(), 50);
     assert_eq!(p.devices.len(), 1);
     assert_eq!(p.devices[0].scan.as_millis(), 100);
     assert_eq!(p.tags.len(), 2);
@@ -61,6 +63,7 @@ fn parses_a_valid_project() {
 fn defaults_to_loopback() {
     let p = Project::from_toml("").unwrap();
     assert_eq!(p.server.listen, "127.0.0.1:8080");
+    assert_eq!(p.server.publish.as_millis(), 100);
     assert!(p.devices.is_empty() && p.tags.is_empty());
 }
 
@@ -76,6 +79,9 @@ fn rejects_bad_projects() {
         "device = \"none\"\nspace = \"coil\"",
     );
     assert!(err(&no_dev).contains("없는 장치"));
+
+    let slow_pub = GOOD.replace("publish_ms = 50", "publish_ms = 5");
+    assert!(err(&slow_pub).contains("방송 주기"));
 
     let fast = GOOD.replace("scan_ms = 100", "scan_ms = 5");
     assert!(err(&fast).contains("최소"));

@@ -23,6 +23,8 @@ export class Store {
   latestAlarm = $state<AlarmRecord | null>(null);
 
   #index = new Map<string, number>();
+  /** 마지막으로 반영한 알람 기록의 순번(스냅샷과 겹치는 기록을 거르는 기준). */
+  #lastAlarmSeq = 0;
 
   /** 스트림 메시지 하나를 반영한다. */
   apply(msg: StreamMessage): void {
@@ -33,26 +35,45 @@ export class Store {
         this.#index = new Map(this.names.map((n, i) => [n, i]));
         this.activeNames = msg.data.active.map((t) => t.name);
         this.recent = msg.data.recent.slice(-RECENT_LIMIT);
+        this.#lastAlarmSeq = msg.data.recent.reduce((m, r) => Math.max(m, r.seq), 0);
         this.latestAlarm = null;
         break;
       }
-      case "tag": {
-        const i = this.#index.get(msg.data.name);
-        if (i === undefined) return;
-        this.tags[i] = msg.data;
-        const isActive = msg.data.alarm_state !== null && msg.data.alarm_state !== "NORMAL";
-        const was = this.activeNames.includes(msg.data.name);
-        if (isActive && !was) this.activeNames.push(msg.data.name);
-        if (!isActive && was) this.activeNames = this.activeNames.filter((n) => n !== msg.data.name);
+      case "tags": {
+        // 묶음의 항목은 위치(인덱스)로 태그를 가리킨다. 정적 정보(이름 등)는 스냅샷에만 있다.
+        for (const [i, value, quality, state] of msg.data.items) {
+          const tag = this.tags[i];
+          if (!tag) continue;
+          const next: TagSnapshot = {
+            ...tag,
+            value: value ?? tag.value,
+            quality: quality === 1 ? "good" : "bad",
+            changed_ms: msg.data.time_ms,
+            alarm_state: state ?? tag.alarm_state,
+          };
+          this.tags[i] = next;
+          this.#trackActive(tag.name, next.alarm_state);
+        }
         break;
       }
-      case "alarm": {
-        this.recent.push(msg.data);
+      case "alarms": {
+        for (const r of msg.data) {
+          if (r.seq <= this.#lastAlarmSeq) continue;
+          this.#lastAlarmSeq = r.seq;
+          this.recent.push(r);
+          this.latestAlarm = r;
+        }
         if (this.recent.length > RECENT_LIMIT) this.recent.splice(0, this.recent.length - RECENT_LIMIT);
-        this.latestAlarm = msg.data;
         break;
       }
     }
+  }
+
+  #trackActive(name: string, state: TagSnapshot["alarm_state"]): void {
+    const isActive = state !== null && state !== "NORMAL";
+    const was = this.activeNames.includes(name);
+    if (isActive && !was) this.activeNames.push(name);
+    if (!isActive && was) this.activeNames = this.activeNames.filter((n) => n !== name);
   }
 
   setStatus(doc: StatusDoc): void {

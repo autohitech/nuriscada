@@ -17,6 +17,8 @@ use serde::Deserialize;
 
 /// 지원하는 가장 짧은 스캔 주기(밀리초). 제품 목표는 100 ms이고 시험을 위해 더 짧은 값을 허용한다.
 pub const MIN_SCAN_MS: u64 = 10;
+/// 가장 짧은 방송 주기(밀리초).
+pub const MIN_PUBLISH_MS: u64 = 20;
 
 /// 설정 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +49,8 @@ fn invalid<T>(msg: impl Into<String>) -> Result<T, ConfigError> {
 pub struct ServerConfig {
     /// 수신 주소. 기본은 루프백이다.
     pub listen: String,
+    /// 변경된 태그를 웹소켓으로 묶어 보내는 주기. 한 주기에 묶음 하나를 보낸다.
+    pub publish: Duration,
 }
 
 /// 장치 드라이버 종류.
@@ -179,14 +183,21 @@ struct RawProject {
 struct RawServer {
     #[serde(default = "default_listen")]
     listen: String,
+    #[serde(default = "default_publish_ms")]
+    publish_ms: u64,
 }
 
 impl Default for RawServer {
     fn default() -> Self {
         Self {
             listen: default_listen(),
+            publish_ms: default_publish_ms(),
         }
     }
+}
+
+fn default_publish_ms() -> u64 {
+    100
 }
 
 fn default_listen() -> String {
@@ -410,9 +421,16 @@ impl Project {
             });
         }
 
+        if raw.server.publish_ms < MIN_PUBLISH_MS {
+            return invalid(format!(
+                "방송 주기 {} ms는 최소 {MIN_PUBLISH_MS} ms보다 짧다",
+                raw.server.publish_ms
+            ));
+        }
         Ok(Self {
             server: ServerConfig {
                 listen: raw.server.listen,
+                publish: Duration::from_millis(raw.server.publish_ms),
             },
             devices,
             tags,

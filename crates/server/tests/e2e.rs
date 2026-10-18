@@ -186,7 +186,7 @@ async fn rejects_foreign_host_and_origin() {
 }
 
 #[tokio::test]
-async fn websocket_sends_snapshot_then_changes_only() {
+async fn websocket_sends_snapshot_then_batched_changes() {
     let st = start().await;
     let url = format!("ws://{}/api/v1/stream", st.addr);
     let (mut ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
@@ -195,24 +195,37 @@ async fn websocket_sends_snapshot_then_changes_only() {
     let snap: Value = serde_json::from_str(&first).unwrap();
     assert_eq!(snap["type"], "snapshot");
     assert_eq!(snap["data"]["tags"].as_array().unwrap().len(), 2);
+    let snapshot_seq = snap["data"]["seq"].as_u64().unwrap();
 
     st.sim.set_holding(0, &[30]);
-    // 변경 업데이트를 받을 때까지 읽는다.
-    let mut got = None;
-    for _ in 0..100 {
+    // 태그 묶음에서 TANK(위치 0)의 값 300을 찾는다. 묶음 순번은 스냅샷 이후로 이어진다.
+    let mut last_seq = snapshot_seq;
+    let mut found = None;
+    for _ in 0..200 {
         let msg = tokio::time::timeout(Duration::from_secs(3), ws.next())
             .await
             .expect("업데이트가 오지 않았다")
             .unwrap()
             .unwrap();
         let v: Value = serde_json::from_str(&msg.into_text().unwrap()).unwrap();
-        if v["type"] == "tag" && v["data"]["name"] == "TANK" && v["data"]["value"] == 300.0 {
-            got = Some(v);
+        if v["type"] != "tags" {
+            continue;
+        }
+        let seq = v["data"]["seq"].as_u64().unwrap();
+        assert!(seq > last_seq, "순번이 늘어야 한다: {seq} <= {last_seq}");
+        last_seq = seq;
+        if let Some(item) = v["data"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i[0] == 0 && i[1] == 300.0)
+        {
+            found = Some(item.clone());
             break;
         }
     }
-    let v = got.expect("TANK = 300 업데이트");
-    assert_eq!(v["data"]["quality"], "good");
+    let item = found.expect("TANK = 300 항목");
+    assert_eq!(item[2], 1, "품질 good");
 }
 
 /// 임시 웹 디렉터리를 만든다.

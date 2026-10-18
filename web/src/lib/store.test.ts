@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { Store, RECENT_LIMIT, connect } from "./store.svelte";
 import { formatTime, formatValue, severityOfEvent, severityOfState } from "./format";
 import { visibleRange } from "./window";
-import type { AlarmRecord, StreamMessage, TagSnapshot } from "./types";
+import type { AlarmRecord, StreamMessage, TagItem, TagSnapshot } from "./types";
 
 const tag = (name: string, patch: Partial<TagSnapshot> = {}): TagSnapshot => ({
   name,
@@ -27,9 +27,14 @@ const alarm = (seq: number, event: AlarmRecord["event"] = "HIHI"): AlarmRecord =
   value: 1,
 });
 
-const snapshot = (tags: TagSnapshot[], recent: AlarmRecord[] = []): StreamMessage => ({
+const snapshot = (tags: TagSnapshot[], recent: AlarmRecord[] = [], seq = 0): StreamMessage => ({
   type: "snapshot",
-  data: { tags, active: tags.filter((t) => t.alarm_state && t.alarm_state !== "NORMAL"), recent },
+  data: { seq, tags, active: tags.filter((t) => t.alarm_state && t.alarm_state !== "NORMAL"), recent },
+});
+
+const batch = (seq: number, items: TagItem[]): StreamMessage => ({
+  type: "tags",
+  data: { seq, time_ms: 5000 + seq, items },
 });
 
 describe("Store", () => {
@@ -42,34 +47,56 @@ describe("Store", () => {
     expect(s.indexOf("B")).toBe(1);
   });
 
-  it("updates one tag in place and tracks the active set", () => {
+  it("applies batched items by index and tracks the active set", () => {
     const s = new Store();
     s.apply(snapshot([tag("A"), tag("B")]));
-    s.apply({ type: "tag", data: tag("A", { value: 95, quality: "good", alarm_state: "HIHI" }) });
-    expect(s.tags[0]?.value).toBe(95);
+    s.apply(batch(1, [[0, 95, 1, "HIHI"]]));
+    expect(s.tags[0]).toMatchObject({ name: "A", value: 95, quality: "good", alarm_state: "HIHI", changed_ms: 5001 });
     expect(s.tags[1]?.value).toBeNull();
     expect(s.activeNames).toEqual(["A"]);
     // 같은 알람 상태로 다시 와도 중복되지 않는다.
-    s.apply({ type: "tag", data: tag("A", { value: 96, quality: "good", alarm_state: "HIHI" }) });
+    s.apply(batch(2, [[0, 96, 1, "HIHI"]]));
     expect(s.activeNames).toEqual(["A"]);
-    s.apply({ type: "tag", data: tag("A", { value: 10, quality: "good", alarm_state: "NORMAL" }) });
+    s.apply(batch(3, [[0, 10, 1, "NORMAL"]]));
     expect(s.activeNames).toEqual([]);
   });
 
-  it("ignores updates for unknown tags", () => {
+  it("keeps the last value and alarm state when a read fails", () => {
+    const s = new Store();
+    s.apply(snapshot([tag("A", { value: 40, quality: "good", alarm_state: "HIGH" })]));
+    s.apply(batch(1, [[0, null, 0, null]]));
+    expect(s.tags[0]).toMatchObject({ value: 40, quality: "bad", alarm_state: "HIGH" });
+  });
+
+  it("ignores items for unknown positions", () => {
     const s = new Store();
     s.apply(snapshot([tag("A")]));
-    s.apply({ type: "tag", data: tag("ZZZ", { value: 1 }) });
+    s.apply(batch(1, [[7, 1, 1, null]]));
     expect(s.tags).toHaveLength(1);
   });
 
-  it("keeps a bounded alarm log", () => {
+  it("keeps a bounded alarm log and skips records the snapshot already had", () => {
     const s = new Store();
-    s.apply(snapshot([tag("A")]));
-    for (let i = 1; i <= RECENT_LIMIT + 50; i++) s.apply({ type: "alarm", data: alarm(i) });
+    s.apply(snapshot([tag("A")], [alarm(1), alarm(2)]));
+    s.apply({ type: "alarms", data: [alarm(2), alarm(3)] });
+    expect(s.recent.map((r) => r.seq)).toEqual([1, 2, 3]);
+    expect(s.latestAlarm?.seq).toBe(3);
+    const many = Array.from({ length: RECENT_LIMIT + 50 }, (_, i) => alarm(10 + i));
+    s.apply({ type: "alarms", data: many });
     expect(s.recent).toHaveLength(RECENT_LIMIT);
-    expect(s.recent[0]?.seq).toBe(51);
-    expect(s.latestAlarm?.seq).toBe(RECENT_LIMIT + 50);
+    expect(s.recent[s.recent.length - 1]?.seq).toBe(10 + RECENT_LIMIT + 49);
+  });
+
+  it("handles a full batch for 10,000 tags quickly", () => {
+    const s = new Store();
+    const tags = Array.from({ length: 10_000 }, (_, i) => tag(`T${i}`));
+    s.apply(snapshot(tags));
+    const items: TagItem[] = Array.from({ length: 1000 }, (_, k) => [k * 10, k, 1, null]);
+    const t0 = performance.now();
+    for (let n = 0; n < 20; n++) s.apply(batch(n + 1, items));
+    const perBatch = (performance.now() - t0) / 20;
+    // 느슨한 안전망이다(정확한 측정은 설계 0004의 방법을 따른다).
+    expect(perBatch).toBeLessThan(100);
   });
 
   it("replaces state on a new snapshot (reconnect)", () => {

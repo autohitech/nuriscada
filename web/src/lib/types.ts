@@ -47,7 +47,10 @@ export interface StatusDoc {
   devices: DeviceStatus[];
 }
 
+/** 태그 묶음 안의 항목: `[태그 위치, 값, 품질(1=good, 0=bad), 알람 상태]`. */
+export type TagItem = [index: number, value: number | boolean | null, quality: 0 | 1, state: AlarmState | null];
+
 export type StreamMessage =
-  | { type: "snapshot"; data: { tags: TagSnapshot[]; active: TagSnapshot[]; recent: AlarmRecord[] } }
-  | { type: "tag"; data: TagSnapshot }
-  | { type: "alarm"; data: AlarmRecord };
+  | { type: "snapshot"; data: { seq: number; tags: TagSnapshot[]; active: TagSnapshot[]; recent: AlarmRecord[] } }
+  | { type: "tags"; data: { seq: number; time_ms: number; items: TagItem[] } }
+  | { type: "alarms"; data: AlarmRecord[] };

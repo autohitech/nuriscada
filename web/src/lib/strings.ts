@@ -11,6 +11,8 @@ export const ko = {
   reconnecting: "연결 끊김 — 다시 연결하는 중",
   alarms: "알람",
   noAlarms: "활성 알람이 없습니다",
+  moreAlarms: (n: number) => `외 ${n}건`,
+  devicesSummary: (n: number, up: number) => `장치 ${n}개 중 ${up}개 연결`,
   activeAlarms: "활성 알람",
   recentAlarms: "최근 기록",
   noRecent: "기록이 없습니다",

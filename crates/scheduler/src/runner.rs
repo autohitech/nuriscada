@@ -263,17 +263,21 @@ alarm = { kind = 0 }
     #[tokio::test(start_paused = true)]
     async fn unchanged_values_are_not_republished() {
         let rig = start();
-        let mut rx = rig.hub.subscribe();
-        tokio::time::sleep(Duration::from_millis(550)).await;
-        // 첫 스캔의 태그 두 개 변화(품질 Bad → Good)만 방송되고 이후는 조용하다.
-        let mut tag_updates = 0;
-        while let Ok(u) = rx.try_recv() {
-            if matches!(u, crate::hub::Update::Tag(_)) {
-                tag_updates += 1;
-            }
-        }
-        assert_eq!(tag_updates, 2);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        // 첫 스캔: 태그 두 개의 품질이 Bad → Good으로 바뀌어 한 묶음에 담긴다.
+        let first = rig.hub.drain_changes().expect("첫 변경 묶음");
+        assert_eq!(first.seq, 1);
+        assert_eq!(first.items.len(), 2);
+        // 값이 그대로면 이후 스캔은 변경을 만들지 않는다.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(rig.hub.drain_changes().is_none());
         assert!(rig.hub.devices()[0].scans >= 5);
+        // 값이 바뀌면 다음 묶음에 한 번만 담기고 순번이 이어진다.
+        rig.shared.lock().unwrap().words[0] = 7;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let next = rig.hub.drain_changes().expect("변경 묶음");
+        assert_eq!(next.seq, 2);
+        assert_eq!(next.items.len(), 1);
         rig.stop.send(true).unwrap();
         rig.handle.await.unwrap();
     }
