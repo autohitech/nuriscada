@@ -30,6 +30,7 @@ use tokio::task::JoinHandle;
 
 mod control;
 /// 계정·세션·감사 기록 저장소.
+pub mod error_code;
 pub mod operations;
 
 /// 설정이 고른 드라이버를 감싸는 열거형. `Driver` 트레이트가 동적 호출이 안 되므로 열거형으로 다룬다.
@@ -141,8 +142,8 @@ fn host_of(authority: &str) -> &str {
     authority.split(':').next().unwrap_or(authority)
 }
 
-fn forbidden(reason: &str) -> Response {
-    (StatusCode::FORBIDDEN, reason.to_string()).into_response()
+fn forbidden(code: error_code::Code) -> Response {
+    code.response(StatusCode::FORBIDDEN, None).into_response()
 }
 
 async fn host_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
@@ -153,7 +154,7 @@ async fn host_guard(State(state): State<AppState>, req: Request, next: Next) -> 
             .and_then(|v| v.to_str().ok())
             .map(host_of);
         if !host.is_some_and(|h| allowed.iter().any(|a| a.eq_ignore_ascii_case(h))) {
-            return forbidden("허용되지 않은 Host");
+            return forbidden(error_code::Code::HostNotAllowed);
         }
         // 브라우저가 보낸 Origin이 있으면 같은 호스트여야 한다.
         if let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
@@ -167,7 +168,7 @@ async fn host_guard(State(state): State<AppState>, req: Request, next: Next) -> 
                 .iter()
                 .any(|a| a.eq_ignore_ascii_case(host_of(origin_host)))
             {
-                return forbidden("허용되지 않은 Origin");
+                return forbidden(error_code::Code::OriginNotAllowed);
             }
         }
     }

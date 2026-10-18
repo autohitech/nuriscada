@@ -5,6 +5,7 @@
   import type { AlarmRecord, DeviceSpec, ProjectSpec, TagHistorySample, TagSpec } from "../lib/types";
   import { formatDateTime, formatTime } from "../lib/format";
   import { eventLabel, m } from "../lib/i18n.svelte";
+  import { apiErrorMessage } from "../lib/api";
   export interface SessionDoc {
     authentication_required: boolean;
     needs_setup?: boolean;
@@ -66,7 +67,7 @@
       method: "POST", headers: { "content-type": "application/json", "x-nuriscada-request": "1" }, body: JSON.stringify(body),
     });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error ?? m.requestFailed(response.status));
+    if (!response.ok) throw new Error(apiErrorMessage(data, m.requestFailed(response.status)));
     return data;
   }
 

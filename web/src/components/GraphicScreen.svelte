@@ -2,6 +2,7 @@
 <!-- Copyright NuriScada contributors -->
 <script lang="ts">
   import { m } from "../lib/i18n.svelte";
+  import { apiErrorMessage } from "../lib/api";
   import { onMount } from "svelte";
   import { formatValue } from "../lib/format";
   import type { Store } from "../lib/store.svelte";
@@ -212,7 +213,7 @@
       const getRes = await fetch("/api/v1/project", { credentials: "same-origin" });
       const getBody = await getRes.json().catch(() => ({}));
       if (!getRes.ok) {
-        throw new Error(getBody.error ?? m.projectLoadFailed(getRes.status));
+        throw new Error(apiErrorMessage(getBody, m.projectLoadFailed(getRes.status)));
       }
       const spec = (getBody as { project: ProjectSpec }).project;
       spec.screen = screens.map((s) => ({
@@ -243,7 +244,7 @@
       });
       const postBody = await postRes.json().catch(() => ({}));
       if (!postRes.ok) {
-        throw new Error(postBody.error ?? m.screenSaveFailed(postRes.status));
+        throw new Error(apiErrorMessage(postBody, m.screenSaveFailed(postRes.status)));
       }
       await loadScreens();
       statusMsg = m.screenSaved;

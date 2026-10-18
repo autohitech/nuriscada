@@ -6,12 +6,14 @@ import { LOCALES, detectLocale, eventLabel, i18n, m, setLocale, stateLabel } fro
 import { en } from "./locales/en";
 import { ko } from "./locales/ko";
 
-/** 객체의 모든 키 경로(중첩 포함)를 모은다. */
-function paths(o: Record<string, unknown>, prefix = ""): string[] {
+/** 객체의 모든 (키 경로, 값) 쌍(중첩 포함). 키에 점이 있어도 안전하도록 경로를 배열로 모은다. */
+function entries(o: Record<string, unknown>, prefix: string[] = []): Array<[string[], unknown]> {
   return Object.entries(o).flatMap(([k, v]) =>
-    v && typeof v === "object" ? paths(v as Record<string, unknown>, `${prefix}${k}.`) : [`${prefix}${k}`],
+    v && typeof v === "object" ? entries(v as Record<string, unknown>, [...prefix, k]) : [[[...prefix, k], v] as [string[], unknown]],
   );
 }
+
+const paths = (o: Record<string, unknown>) => entries(o).map(([p]) => p.join("\u0000"));
 
 describe("dictionaries", () => {
   it("English has exactly the same keys as Korean", () => {
@@ -32,11 +34,10 @@ describe("dictionaries", () => {
 
   it("no message is empty and English contains no Hangul", () => {
     const hangul = /[가-힣]/;
-    for (const p of paths(en as unknown as Record<string, unknown>)) {
-      const value = p.split(".").reduce<unknown>((o, k) => (o as Record<string, unknown>)[k], en);
+    for (const [path, value] of entries(en as unknown as Record<string, unknown>)) {
       if (typeof value === "string") {
-        expect(value.length, p).toBeGreaterThan(0);
-        expect(hangul.test(value), p).toBe(false);
+        expect(value.length, path.join(".")).toBeGreaterThan(0);
+        expect(hangul.test(value), path.join(".")).toBe(false);
       }
     }
     expect(hangul.test(en.writeConfirm("A", "1"))).toBe(false);
