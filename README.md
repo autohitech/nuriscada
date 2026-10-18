@@ -70,7 +70,7 @@ cargo run -p nuriscada-server -- --config examples/demo.toml
 | 기존 코드 | 가져오지 않고 명세에서 다시 작성 | 2026-10-18 |
 | 기존 프로젝트 파일 | 읽기 필수, 쓰기 선택 | 2026-10-18 |
 | 동작 기준선 (OD-10) | 관측 기준선 없이 예측으로 진행. 기대값 JSON만 이식, 시험 코드는 Rust로 새로 작성. 기존 제품과 동일하다고 주장하지 않음 | [결정 기록](docs/decisions/0010-behavior-baseline-prediction-only.md) |
-| GitHub 운영 (OD-11) | 스쿼시 병합만, 병합 후 브랜치 자동 삭제, main 보호 없음(위험은 결정 기록 참고), 핵심 멤버만 쓰기·외부는 포크+PR | [결정 기록](docs/decisions/0009-github-operations.md) |
+| GitHub 운영 (OD-11) | 스쿼시 병합만, 병합 후 브랜치 자동 삭제, **`main` 보호 켬**(PR·CI 필수, 강제 push·삭제 금지, 관리자 포함), 핵심 멤버만 쓰기·외부는 포크+PR | [결정 기록](docs/decisions/0009-github-operations.md) |
 | 보안 대응 (OD-9) | 비공개 보안 신고, 접수 확인 7일·수정 목표 90일, 최신 주 버전의 최신+직전 마이너 라인 지원, 수정 후 조율 공개 | [결정 기록](docs/decisions/0008-security-response-policy.md) |
 | 저장소 공개·소유 (OD-7) | 첫 동작 수직 조각까지 비공개, 소유자 autohitech 조직, 저작권 표시 "NuriScada contributors" | [결정 기록](docs/decisions/0007-repository-release-and-ownership.md) |
 | 표준·보안 (OD-5) | 표준은 설계 참고(인증 목표 아님), 인터넷 공개는 읽기 전용, 로컬 계정 + 선택적 OIDC/LDAP, 모든 쓰기·설정 변경·로그인 감사 기록 | [결정 기록](docs/decisions/0006-standards-security-policy.md) |
