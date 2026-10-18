@@ -6,6 +6,7 @@ node_modules/
 target/
 dist/
 .env
+*.cdx.json
 
 # iCloud Drive가 만드는 충돌 복사본(예: "파일 2.txt")이 실수로 올라가지 않게 한다.
 * 2
