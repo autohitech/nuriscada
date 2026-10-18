@@ -76,15 +76,15 @@ flowchart LR
 ### 4-3. 드라이버 인터페이스 (스케치) [I]
 
 ```rust
-// 의사 코드. 실제 이름과 시그니처는 S2에서 확정한다.
+// 실제 정의는 crates/driver-api. 읽기 단위는 ReadBlock 하나다.
 trait Driver: Send {
-    fn connect(&mut self) -> Result<(), DriverError>;
-    fn read(&mut self, blocks: &[ReadBlock]) -> Vec<BlockResult>;
-    fn status(&self) -> LinkStatus;          // 연결, 응답 시간, 재시도 수
+    fn connect(&mut self) -> impl Future<Output = Result<(), DriverError>> + Send;
+    fn read(&mut self, block: &ReadBlock) -> impl Future<Output = Result<BlockData, DriverError>> + Send;
+    fn status(&self) -> LinkStatus; // 연결, 마지막 왕복 시간, 성공/실패 횟수
 }
 ```
 
-GUI 결합이 없고 읽기·상태만 갖는다 (SQ-C01). 쓰기는 다음 조각에서 추가한다.
+GUI 결합이 없고 읽기·상태만 갖는다 (SQ-C01). 쓰기는 다음 조각에서 추가한다. 이 트레이트는 동적 호출(`dyn`)이 안 되므로, 스케줄러는 드라이버 종류별 열거형이나 제네릭으로 다룬다 [S3에서 확정].
 
 ## 5. 규칙 명세
 
@@ -182,7 +182,7 @@ GUI 결합이 없고 읽기·상태만 갖는다 (SQ-C01). 쓰기는 다음 조�
 |---|---|
 | 비동기 런타임·서버 | `tokio`, `axum` |
 | 직렬화·설정 | `serde`, `toml` |
-| MODBUS | `tokio-modbus` 또는 자체 구현(프로토콜이 단순해 자체 구현도 가능) |
+| MODBUS | 자체 구현 (결정 0013) |
 | 로그·계측 | `tracing` |
 | 웹 | TypeScript + 번들러(Vite 등) + 가벼운 UI 프레임워크(후보 비교는 S3) |
 | 시험 | `cargo test`, 웹 시험 도구 |
@@ -206,5 +206,5 @@ GUI 결합이 없고 읽기·상태만 갖는다 (SQ-C01). 쓰기는 다음 조�
 | D-2 | 웹 UI 프레임워크 | S3에서 후보 비교 |
 | D-3 | 슬라이스용 설정 형식 | TOML |
 | D-4 | 기준 하드웨어 | 4코어·8 GB급 산업용 PC 후보 (미정) |
-| D-5 | MODBUS 구현: 외부 크레이트 / 자체 구현 | S2에서 크레이트 평가 후 결정 |
+| D-5 | MODBUS 구현 방식 | **해소**: 직접 구현 ([0013](../decisions/0013-modbus-tcp-implementation.md)) |
 | D-6 | 이력 저장소 스키마 | 이 조각 밖 (다음 조각) |

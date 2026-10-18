@@ -13,3 +13,8 @@ workspace = true
 
 [dependencies]
 nuriscada-driver-api = { path = "../driver-api" }
+tokio = { workspace = true, features = ["net", "io-util", "time"] }
+
+[dev-dependencies]
+nuriscada-sim-modbus = { path = "../sim-modbus" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
