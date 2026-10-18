@@ -41,6 +41,7 @@ export interface DeviceStatus {
 }
 
 export interface StatusDoc {
+  alarm_archive?: { healthy: boolean; error: string | null } | null;
   version: string;
   uptime_s: number;
   tag_count: number;

@@ -140,6 +140,8 @@ pub enum TagBody {
 /// 태그.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tag {
+    /// 명시적으로 쓰기를 허용한 태그. 기본은 false다.
+    pub writable: bool,
     /// 태그 이름(프로젝트 안에서 유일).
     pub name: String,
     /// 장치 목록에서의 위치.
@@ -227,6 +229,8 @@ fn default_scan_ms() -> u64 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawTag {
+    #[serde(default)]
+    writable: bool,
     name: String,
     device: String,
     #[serde(default = "default_unit")]
@@ -342,6 +346,12 @@ impl Project {
                     ConfigError::Invalid(format!("태그 `{}`: 없는 장치 `{}`", t.name, t.device))
                 })?;
             let space = parse_space(&t.space)?;
+            if t.writable && (!matches!(space, Space::Coil | Space::Holding) || t.unit == 0) {
+                return invalid(format!(
+                    "태그 `{}`: 쓰기는 유닛 1 이상인 coil·holding만 허용한다",
+                    t.name
+                ));
+            }
             let body = match t.kind.as_str() {
                 "analog" => {
                     if space.kind() != DataKind::Word {
@@ -412,6 +422,7 @@ impl Project {
                 }
             };
             tags.push(Tag {
+                writable: t.writable,
                 name: t.name,
                 device,
                 unit: t.unit,

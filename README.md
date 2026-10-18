@@ -1,6 +1,6 @@
 # NuriScada
 
-NuriScada는 Windows, Linux, macOS에서 동작하는 무료 오픈소스 SCADA 소프트웨어입니다. **현재 설계 단계**이며 실행할 수 있는 코드는 아직 없습니다.
+NuriScada는 Windows, Linux, macOS에서 동작하는 무료 오픈소스 SCADA 소프트웨어입니다. **초기 구현·검증 단계**입니다. MODBUS 읽기·환산·기본 알람·웹 화면과 계정·로컬 쓰기·알람 이력을 구현했으며, 전체 기능과 현장 배포 검증은 아직 완료되지 않았습니다.
 
 - 라이선스: [Apache-2.0](LICENSE). 상업적 사용을 포함해 자유롭게 쓸 수 있습니다.
 - **보증과 책임 없음**: 이 소프트웨어는 "있는 그대로" 제공되며 개발자는 사용으로 생기는 어떤 손해에도 책임을 지지 않습니다. 자세한 내용은 [LICENSE](LICENSE)와 [안전 고지](SAFETY.md)를 읽으세요.
@@ -36,13 +36,14 @@ cd web && npm ci && npm run check && npm test && npm run build
 ```sh
 cargo run -p nuriscada-sim-modbus -- --demo          # MODBUS TCP 시뮬레이터
 (cd web && npm ci && npm run build)                  # 웹 화면 빌드
+cargo run -p nuriscada-server -- --config examples/demo.toml --init-admin admin
 cargo run -p nuriscada-server -- --config examples/demo.toml
-# 브라우저에서 http://127.0.0.1:8080/ 을 연다. API: curl http://127.0.0.1:8080/api/v1/tags
+# 브라우저에서 http://127.0.0.1:8080/ 을 열고 설정한 계정으로 로그인한다.
 ```
 
 화면 개발 중에는 `cd web && npm run dev`로 개발 서버를 띄운다(`/api`는 로컬 서버로 넘긴다).
 
-서버는 기본적으로 루프백에서만 수신한다. 인증이 없는 초기 버전이므로 외부에 노출하지 마세요.
+서버는 기본적으로 루프백에서만 수신하고 계정 인증을 요구한다. 최초 관리자 설정은 숨김 비밀번호를 입력받고 종료하며 한 번만 실행한다. 쓰기는 서버의 --enable-writes와 태그의 writable=true를 모두 설정해야 한다. 공개 배치는 --public-read-only와 HTTPS 구성이 필요하다. 구현 범위와 제한은 [운영 경로 설계](docs/design/0005-operational-path.md)를 읽는다.
 
 ## 방향
 

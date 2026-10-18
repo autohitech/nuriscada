@@ -33,6 +33,7 @@
   <h1>{ko.appTitle}</h1>
 
   <div class="group" role="status" aria-live="polite">
+    {#if store.archiveError}<span role="alert" title={store.archiveError}><StateChip severity="critical" label="알람 기록 오류" /></span>{/if}
     {#if store.connected}
       <StateChip severity="normal" label={ko.connected} />
     {:else}

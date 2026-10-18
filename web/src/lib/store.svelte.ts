@@ -18,6 +18,7 @@ export class Store {
   activeNames = $state<string[]>([]);
   recent = $state<AlarmRecord[]>([]);
   devices = $state<DeviceStatus[]>([]);
+  archiveError = $state<string | null>(null);
   connected = $state(false);
   /** 마지막 알람 기록을 낭독용 문구로 바꾸기 위한 최신 기록. */
   latestAlarm = $state<AlarmRecord | null>(null);
@@ -77,6 +78,7 @@ export class Store {
   }
 
   setStatus(doc: StatusDoc): void {
+    this.archiveError = doc.alarm_archive?.error ?? null;
     this.devices = doc.devices;
   }
 

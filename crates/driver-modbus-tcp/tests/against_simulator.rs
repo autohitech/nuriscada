@@ -29,6 +29,41 @@ async fn setup() -> (Simulator, ModbusTcpClient) {
 }
 
 #[tokio::test]
+async fn writes_single_coil_and_register_and_does_not_retry_uncertain_result() {
+    let (sim, mut client) = setup().await;
+    client.write_single(1, SPACE_COILS, 3, 1).await.unwrap();
+    client
+        .write_single(1, SPACE_HOLDING_REGISTERS, 10, 65535)
+        .await
+        .unwrap();
+    assert!(sim.state().coils[3]);
+    assert_eq!(sim.state().holding_registers[10], 65535);
+    assert!(matches!(
+        client.write_single(1, SPACE_INPUT_REGISTERS, 0, 1).await,
+        Err(DriverError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        client.write_single(0, SPACE_COILS, 0, 1).await,
+        Err(DriverError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        client.write_single(1, SPACE_COILS, 0, 2).await,
+        Err(DriverError::InvalidRequest(_))
+    ));
+    let before = sim.state().requests_served;
+    sim.state().drop_connections = true;
+    assert!(
+        client
+            .write_single(1, SPACE_HOLDING_REGISTERS, 10, 42)
+            .await
+            .is_err()
+    );
+    // 장치는 썼지만 응답을 잃을 수 있다. 이 경우 임의로 두 번 보내지 않는다.
+    assert_eq!(sim.state().requests_served, before + 1);
+    assert_eq!(sim.state().holding_registers[10], 42);
+}
+
+#[tokio::test]
 async fn reads_all_four_areas() {
     let (sim, mut c) = setup().await;
     sim.set_holding(10, &[100, 200, 300]);

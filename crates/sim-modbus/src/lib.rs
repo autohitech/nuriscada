@@ -119,15 +119,34 @@ fn exception(txn: [u8; 2], unit: u8, function: u8, code: u8) -> Vec<u8> {
 }
 
 /// 요청 프레임(머리 포함)에 대한 응답을 만든다. 응답하지 않으면 `None`이다.
-fn respond(frame: &[u8], state: &State) -> Option<Vec<u8>> {
+fn respond(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
     let txn = [frame[0], frame[1]];
     let unit = frame[6];
     let function = frame[7];
-    if frame.len() != 12 || !(1..=4).contains(&function) {
+    if frame.len() != 12 || !(1..=6).contains(&function) {
         return Some(exception(txn, unit, function, 1));
     }
     let start = usize::from(u16::from_be_bytes([frame[8], frame[9]]));
     let count = usize::from(u16::from_be_bytes([frame[10], frame[11]]));
+    if function == 5 || function == 6 {
+        let size = if function == 5 {
+            state.coils.len()
+        } else {
+            state.holding_registers.len()
+        };
+        if start >= size {
+            return Some(exception(txn, unit, function, 2));
+        }
+        if function == 5 {
+            if count != 0 && count != 0xff00 {
+                return Some(exception(txn, unit, function, 3));
+            }
+            state.coils[start] = count == 0xff00;
+        } else {
+            state.holding_registers[start] = count as u16;
+        }
+        return Some(frame.to_vec());
+    }
     let is_bit = function <= 2;
     let max = if is_bit { 2000 } else { 125 };
     if count == 0 || count > max {
@@ -189,7 +208,11 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> io::Result<()
         let (delay, drop_now, reply) = {
             let mut s = state.lock().expect("시뮬레이터 상태 잠금");
             s.requests_served += 1;
-            (s.response_delay, s.drop_connections, respond(&frame, &s))
+            (
+                s.response_delay,
+                s.drop_connections,
+                respond(&frame, &mut s),
+            )
         };
         if drop_now {
             return Ok(());
@@ -230,11 +253,11 @@ mod tests {
         assert_eq!(err, [0, 2, 0, 0, 0, 3, 1, 0x83, 2]);
 
         // 지원하지 않는 기능 → 오류 코드 1.
-        s.write_all(&[0, 3, 0, 0, 0, 6, 1, 6, 0, 0, 0, 1])
+        s.write_all(&[0, 3, 0, 0, 0, 6, 1, 7, 0, 0, 0, 1])
             .await
             .unwrap();
         s.read_exact(&mut err).await.unwrap();
-        assert_eq!(err, [0, 3, 0, 0, 0, 3, 1, 0x86, 1]);
+        assert_eq!(err, [0, 3, 0, 0, 0, 3, 1, 0x87, 1]);
         assert_eq!(sim.state().requests_served, 3);
     }
 }

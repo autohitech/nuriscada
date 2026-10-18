@@ -7,8 +7,8 @@
 //!
 //! `--web-dir`을 주지 않으면 현재 디렉터리의 `web/dist`가 있을 때 그것을 쓴다.
 //!
-//! 이 조각에는 인증이 없다. 루프백이 아닌 주소에서 수신하려면 `--allow-external`을 줘야 하며,
-//! 신뢰할 수 있는 네트워크에서 시험하는 용도로만 써야 한다.
+//! 운영 서버는 로컬 계정 인증을 요구한다. 최초 관리자 설정은 --init-admin으로 수행한다.
+//! 외부 수신은 --allow-external과 HTTPS 프록시를 사용하며, 공개 배치는 --public-read-only로 고정한다.
 
 use std::net::SocketAddr;
 use std::process::ExitCode;
@@ -16,12 +16,15 @@ use std::sync::Arc;
 
 use nuriscada_project::Project;
 use nuriscada_scheduler::Hub;
-use nuriscada_server::{router_with_web, start_scanners};
+use nuriscada_server::{
+    operations::{Operations, Role},
+    router_with_operations, start_scanners,
+};
 use tokio::net::TcpListener;
 
 fn usage() -> ExitCode {
     eprintln!(
-        "사용: nuriscada-server --config <project.toml> [--listen <주소:포트>] [--allow-external]"
+        "사용: nuriscada-server --config <project.toml> [--data-dir <경로>] [--init-admin <계정>] [--password-stdin] [--enable-writes] [--public-read-only] [--listen <주소:포트>] [--allow-external] [--web-dir <경로>]"
     );
     ExitCode::from(2)
 }
@@ -32,6 +35,11 @@ async fn main() -> ExitCode {
     let mut listen = None;
     let mut web_dir: Option<String> = None;
     let mut allow_external = false;
+    let mut data_dir: Option<std::path::PathBuf> = None;
+    let mut init_admin = None;
+    let mut password_stdin = false;
+    let mut enable_writes = false;
+    let mut public_read_only = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -39,6 +47,11 @@ async fn main() -> ExitCode {
             "--listen" => listen = args.next(),
             "--web-dir" => web_dir = args.next(),
             "--allow-external" => allow_external = true,
+            "--data-dir" => data_dir = args.next().map(Into::into),
+            "--init-admin" => init_admin = args.next(),
+            "--password-stdin" => password_stdin = true,
+            "--enable-writes" => enable_writes = true,
+            "--public-read-only" => public_read_only = true,
             _ => return usage(),
         }
     }
@@ -60,6 +73,89 @@ async fn main() -> ExitCode {
         }
     };
 
+    let data_dir = data_dir.unwrap_or_else(|| {
+        std::path::Path::new(&config)
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join(".nuriscada")
+    });
+    let new_dir = !data_dir.exists();
+    if let Err(e) = std::fs::create_dir_all(&data_dir) {
+        eprintln!("데이터 디렉터리 생성 실패: {e}");
+        return ExitCode::FAILURE;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if new_dir
+            && let Err(e) =
+                std::fs::set_permissions(&data_dir, std::fs::Permissions::from_mode(0o700))
+        {
+            eprintln!("데이터 디렉터리 권한 설정 실패: {e}");
+            return ExitCode::FAILURE;
+        }
+        if std::fs::metadata(&data_dir)
+            .map(|m| m.permissions().mode() & 0o077 != 0)
+            .unwrap_or(true)
+        {
+            eprintln!("데이터 디렉터리는 소유자만 접근할 수 있어야 한다 (0700)");
+            return ExitCode::FAILURE;
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = new_dir;
+    let operations = match Operations::open_with_mode(
+        &data_dir.join("operations.sqlite3"),
+        Arc::clone(&project),
+        enable_writes,
+        public_read_only,
+    ) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("운영 저장소 열기 실패: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Some(name) = init_admin {
+        let password = if password_stdin {
+            let mut line = String::new();
+            if let Err(e) = std::io::stdin().read_line(&mut line) {
+                eprintln!("비밀번호 읽기 실패: {e}");
+                return ExitCode::FAILURE;
+            }
+            line.trim_end_matches(['\r', '\n']).to_string()
+        } else {
+            match rpassword::prompt_password("최초 관리자 비밀번호 (12~128바이트): ") {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("비밀번호 읽기 실패: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        };
+        return match operations.create_user(
+            &name,
+            &password,
+            Role::Admin,
+            true,
+            "local-cli",
+            "local-cli",
+        ) {
+            Ok(()) => {
+                println!("최초 관리자 설정 완료");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("관리자 설정 실패: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    if operations.needs_setup().unwrap_or(true) {
+        eprintln!("먼저 같은 설정·데이터 경로로 --init-admin <계정>을 실행하라. 기본 계정은 없다.");
+        return ExitCode::FAILURE;
+    }
+
     let listen = listen.unwrap_or_else(|| project.server.listen.clone());
     let addr: SocketAddr = match listen.parse() {
         Ok(a) => a,
@@ -71,12 +167,16 @@ async fn main() -> ExitCode {
     if !addr.ip().is_loopback() && !allow_external {
         eprintln!(
             "루프백이 아닌 주소({addr})에서 수신하려면 --allow-external이 필요하다. \
-             이 버전에는 인증이 없으므로 신뢰할 수 있는 네트워크에서만 쓰라."
+             외부 구성은 HTTPS와 읽기 전용 공개 모드를 사용하라."
         );
         return ExitCode::FAILURE;
     }
     if !addr.ip().is_loopback() {
-        eprintln!("경고: 인증 없이 {addr}에서 수신한다.");
+        eprintln!("인증을 사용하는 외부 읽기 전용 수신: {addr}. HTTPS 프록시가 필요하다.");
+    }
+    if enable_writes && !addr.ip().is_loopback() {
+        eprintln!("쓰기 활성화는 루프백 바인딩에서만 가능하다");
+        return ExitCode::FAILURE;
     }
 
     let listener = match TcpListener::bind(addr).await {
@@ -88,6 +188,7 @@ async fn main() -> ExitCode {
     };
     let bound = listener.local_addr().unwrap_or(addr);
     let hub = Hub::new(&project);
+    let archive = operations.start_archive(Arc::clone(&hub));
     let scanners = start_scanners(&project, &hub);
     println!("수신 시작: http://{bound}/api/v1/status");
 
@@ -97,15 +198,26 @@ async fn main() -> ExitCode {
             .then(|| "web/dist".into())
     });
     if let Some(dir) = &web_dir {
+        if let (Ok(web), Ok(data)) = (std::fs::canonicalize(dir), std::fs::canonicalize(&data_dir))
+            && data.starts_with(web)
+        {
+            eprintln!("데이터 디렉터리는 웹 자원 디렉터리 밖에 있어야 한다");
+            scanners.stop().await;
+            return ExitCode::FAILURE;
+        }
         println!("웹 화면: http://{bound}/ ({})", dir.display());
     }
-    let app = router_with_web(hub, bound, web_dir);
-    let served = axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .await;
+    let app = router_with_operations(hub, bound, web_dir, operations);
+    let served = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await;
     scanners.stop().await;
+    archive.stop().await;
     match served {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

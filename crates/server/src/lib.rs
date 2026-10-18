@@ -5,7 +5,7 @@
 //!
 //! 기본 바인딩은 루프백이다. 루프백에서는 `Host`와 `Origin` 헤더를 검사해 다른 웹 페이지가
 //! 브라우저를 통해 이 서버에 접근하지 못하게 한다(DNS 재바인딩 방어).
-//! 이 조각에는 인증이 없으므로 외부 노출은 명시적으로 허용했을 때만 가능하다.
+//! 운영 실행 파일은 계정·세션 인증을 사용한다. router/router_with_web은 읽기 전용 시험·시연용이다.
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Component, Path, PathBuf};
@@ -18,7 +18,7 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use nuriscada_driver_api::{BlockData, Driver, DriverError, LinkStatus, ReadBlock};
 use nuriscada_driver_modbus_tcp::ModbusTcpClient;
 use nuriscada_project::{DriverConfig, Project};
@@ -27,6 +27,10 @@ use nuriscada_scheduler::{Hub, PlanLimits, plan, run_device};
 use serde_json::json;
 use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
+
+mod control;
+/// 계정·세션·감사 기록 저장소.
+pub mod operations;
 
 /// 설정이 고른 드라이버를 감싸는 열거형. `Driver` 트레이트가 동적 호출이 안 되므로 열거형으로 다룬다.
 pub enum AnyDriver {
@@ -107,6 +111,7 @@ struct Guard {
 
 #[derive(Clone)]
 struct AppState {
+    operations: Option<Arc<operations::Operations>>,
     hub: Arc<Hub>,
     guard: Guard,
     /// 웹 UI 빌드 결과 디렉터리. 없으면 API만 제공한다.
@@ -177,19 +182,62 @@ pub fn router(hub: Arc<Hub>, listen: SocketAddr) -> Router {
 /// API와 웹 UI 정적 파일을 함께 제공하는 경로를 만든다. 모든 자원은 같은 출처에서 나오며
 /// 외부 CDN에 의존하지 않는다.
 pub fn router_with_web(hub: Arc<Hub>, listen: SocketAddr, web_dir: Option<PathBuf>) -> Router {
+    build_router(hub, listen, web_dir, None)
+}
+
+/// 인증과 영구 감사 기록을 사용하는 운영 서버. 읽기 전용 시연 라우터와 구분한다.
+pub fn router_with_operations(
+    hub: Arc<Hub>,
+    listen: SocketAddr,
+    web_dir: Option<PathBuf>,
+    operations: Arc<operations::Operations>,
+) -> Router {
+    build_router(hub, listen, web_dir, Some(operations))
+}
+
+fn build_router(
+    hub: Arc<Hub>,
+    listen: SocketAddr,
+    web_dir: Option<PathBuf>,
+    operations: Option<Arc<operations::Operations>>,
+) -> Router {
+    // 명시적 공개 모드는 프록시가 전달한 공개 Host를 사용한다. 변경 API는 별도로 차단한다.
+    let public_mode = operations.as_ref().is_some_and(|o| o.public_read_only);
     let state = AppState {
+        operations,
         hub,
         guard: Guard {
-            allowed_hosts: allowed_hosts_for(listen).map(Arc::new),
+            allowed_hosts: if public_mode {
+                None
+            } else {
+                allowed_hosts_for(listen).map(Arc::new)
+            },
         },
         web_dir: web_dir.map(Arc::new),
     };
     Router::new()
+        .route("/api/v1/auth/session", get(control::session))
+        .route("/api/v1/auth/login", post(control::login))
+        .route("/api/v1/auth/logout", post(control::logout))
+        .route("/api/v1/users", post(control::create_user))
+        .route("/api/v1/audit", get(control::audit))
+        .route("/api/v1/history/alarms", get(control::alarm_history))
+        .route(
+            "/api/v1/history/alarms/{id}/ack",
+            post(control::acknowledge),
+        )
+        .route("/api/v1/control/tags", get(control::control_tags))
+        .route("/api/v1/control/tags/{name}", post(control::write_tag))
         .route("/api/v1/tags", get(tags))
         .route("/api/v1/alarms", get(alarms))
         .route("/api/v1/status", get(status))
         .route("/api/v1/stream", get(stream))
         .fallback(static_files)
+        .layer(axum::extract::DefaultBodyLimit::max(4096))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            control::guard,
+        ))
         .layer(middleware::from_fn(security_headers))
         .layer(middleware::from_fn_with_state(state.clone(), host_guard))
         .with_state(state)
@@ -197,6 +245,7 @@ pub fn router_with_web(hub: Arc<Hub>, listen: SocketAddr, web_dir: Option<PathBu
 
 /// 모든 응답에 붙이는 보안 헤더.
 async fn security_headers(req: Request, next: Next) -> Response {
+    let api = req.uri().path().starts_with("/api/");
     let mut res = next.run(req).await;
     let h = res.headers_mut();
     h.insert(
@@ -216,6 +265,9 @@ async fn security_headers(req: Request, next: Next) -> Response {
         HeaderValue::from_static("no-referrer"),
     );
     h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    if api {
+        h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
     res
 }
 
@@ -304,6 +356,7 @@ async fn status(State(s): State<AppState>) -> Json<serde_json::Value> {
         "uptime_s": s.hub.uptime_secs(),
         "tag_count": s.hub.tags().len(),
         "devices": s.hub.devices(),
+        "alarm_archive": s.operations.as_ref().map(|o|o.archive_status()),
     }))
 }
 
@@ -322,15 +375,22 @@ async fn snapshot_message(hub: &Arc<Hub>) -> Result<(Message, u64), tokio::task:
     .await
 }
 
-async fn stream(ws: WebSocketUpgrade, State(s): State<AppState>) -> Response {
-    ws.on_upgrade(move |socket| push_updates(socket, s.hub))
+async fn stream(ws: WebSocketUpgrade, State(s): State<AppState>, headers: HeaderMap) -> Response {
+    let auth = s
+        .operations
+        .map(|ops| (ops, control::token(&headers).unwrap_or_default()));
+    ws.on_upgrade(move |socket| push_updates(socket, s.hub, auth))
 }
 
 /// 연결할 때 전체 스냅샷을 보내고, 이후 변경 묶음과 알람 기록을 밀어 보낸다.
 ///
 /// 스냅샷보다 먼저 구독하고, 스냅샷에 이미 반영된 묶음(순번이 같거나 작은 것)은 버린다.
 /// 그래서 연결 직후의 변경을 놓치지도, 오래된 값으로 되돌리지도 않는다.
-async fn push_updates(mut socket: WebSocket, hub: Arc<Hub>) {
+async fn push_updates(
+    mut socket: WebSocket,
+    hub: Arc<Hub>,
+    auth: Option<(Arc<operations::Operations>, String)>,
+) {
     let mut rx = hub.subscribe_wire();
     let Ok((first, mut covered)) = snapshot_message(&hub).await else {
         return;
@@ -338,8 +398,14 @@ async fn push_updates(mut socket: WebSocket, hub: Arc<Hub>) {
     if socket.send(first).await.is_err() {
         return;
     }
+    let mut expiry = tokio::time::interval(std::time::Duration::from_secs(30));
     loop {
         tokio::select! {
+            _=expiry.tick(),if auth.is_some()=>{
+                let (ops,token)=auth.as_ref().expect("인증 경로");
+                let ops=ops.clone();let token=token.clone();
+                if !matches!(tokio::task::spawn_blocking(move||ops.authenticate(&token)).await,Ok(Ok(Some(_)))) {return;}
+            }
             frame = rx.recv() => match frame {
                 Ok(frame) => {
                     if frame.seq.is_some_and(|seq| seq <= covered) {
