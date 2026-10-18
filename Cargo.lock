@@ -486,6 +486,7 @@ dependencies = [
  "nuriscada-core",
  "nuriscada-driver-api",
  "serde",
+ "serde_json",
  "toml",
 ]
 
