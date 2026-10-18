@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- Copyright NuriScada contributors -->
 <script lang="ts">
+  import { m } from "../lib/i18n.svelte";
   import { onMount } from "svelte";
   import { formatValue } from "../lib/format";
   import type { Store } from "../lib/store.svelte";
@@ -36,15 +37,7 @@
   } | null>(null);
   let svgEl = $state<SVGSVGElement | null>(null);
 
-  const WIDGET_KIND_LABEL: Record<GraphicWidgetKind, string> = {
-    tank: "탱크",
-    gauge: "게이지",
-    pump: "펌프",
-    valve: "밸브",
-    lamp: "상태 램프",
-    value: "값 표시기",
-    label: "문구",
-  };
+  const widgetKindLabel = (k: GraphicWidgetKind): string => m.widgetKind[k] ?? k;
 
   function buildAutoScreen(tags: TagSnapshot[]): ScreenSpec {
     const widgets: GraphicWidgetSpec[] = tags.slice(0, 12).map((t, idx) => {
@@ -72,7 +65,7 @@
       };
     });
     return {
-      name: "기본 공정 화면",
+      name: m.defaultScreenName,
       width: 800,
       height: Math.max(360, Math.ceil(Math.max(widgets.length, 1) / 4) * 150 + 40),
       widget: widgets,
@@ -140,7 +133,7 @@
     ensureEditableScreens();
     const nextNum = screens.length + 1;
     screens.push({
-      name: `공정 화면 ${nextNum}`,
+      name: m.newScreenName(nextNum),
       width: 800,
       height: 420,
       widget: [],
@@ -182,7 +175,7 @@
     const nw: GraphicWidgetSpec = {
       id,
       kind,
-      label: defaultTag ?? WIDGET_KIND_LABEL[kind],
+      label: defaultTag ?? widgetKindLabel(kind),
       tag: defaultTag,
       x: col,
       y: row,
@@ -219,7 +212,7 @@
       const getRes = await fetch("/api/v1/project", { credentials: "same-origin" });
       const getBody = await getRes.json().catch(() => ({}));
       if (!getRes.ok) {
-        throw new Error(getBody.error ?? `프로젝트 조회 실패 (${getRes.status})`);
+        throw new Error(getBody.error ?? m.projectLoadFailed(getRes.status));
       }
       const spec = (getBody as { project: ProjectSpec }).project;
       spec.screen = screens.map((s) => ({
@@ -250,10 +243,10 @@
       });
       const postBody = await postRes.json().catch(() => ({}));
       if (!postRes.ok) {
-        throw new Error(postBody.error ?? `화면 저장 실패 (${postRes.status})`);
+        throw new Error(postBody.error ?? m.screenSaveFailed(postRes.status));
       }
       await loadScreens();
-      statusMsg = "그래픽 화면 설정을 저장하고 즉시 반영했습니다.";
+      statusMsg = m.screenSaved;
     } catch (e) {
       statusMsg = e instanceof Error ? e.message : String(e);
     } finally {
@@ -322,15 +315,15 @@
 
   function statusBadgeText(tag: TagSnapshot | undefined): string {
     if (!tag) return "";
-    if (tag.quality === "bad") return "통신불량";
-    if (tag.alarm_state && tag.alarm_state !== "NORMAL") return `경보:${tag.alarm_state}`;
-    return "정상";
+    if (tag.quality === "bad") return m.badCommShort;
+    if (tag.alarm_state && tag.alarm_state !== "NORMAL") return m.alarmShort(tag.alarm_state);
+    return m.normalShort;
   }
 </script>
 
-<section class="graphic-panel" aria-label="그래픽 공정 화면">
+<section class="graphic-panel" aria-label={m.graphicPanel}>
   <header class="graphic-toolbar">
-    <div class="tabs" role="tablist" aria-label="화면 목록">
+    <div class="tabs" role="tablist" aria-label={m.screenList}>
       {#each displayScreens as scr, idx (scr.name + "-" + idx)}
         <button
           type="button"
@@ -349,26 +342,26 @@
     {#if canEdit}
       <div class="editor-actions">
         <button type="button" onclick={toggleEdit}>
-          {editing ? "편집 닫기" : "화면 편집"}
+          {editing ? m.closeEdit : m.editScreen}
         </button>
         {#if editing}
-          <button type="button" onclick={addScreen}>+ 화면</button>
+          <button type="button" onclick={addScreen}>{m.addScreenBtn}</button>
           <button type="button" disabled={screens.length <= 1} onclick={removeCurrentScreen}>
-            화면 삭제
+            {m.deleteScreen}
           </button>
-          <button type="button" onclick={autoLayoutFromTags}>태그 자동 배치</button>
-          <button type="button" onclick={() => addWidget("tank")}>+ 탱크</button>
-          <button type="button" onclick={() => addWidget("gauge")}>+ 게이지</button>
-          <button type="button" onclick={() => addWidget("pump")}>+ 펌프</button>
-          <button type="button" onclick={() => addWidget("valve")}>+ 밸브</button>
-          <button type="button" onclick={() => addWidget("lamp")}>+ 램프</button>
-          <button type="button" onclick={() => addWidget("value")}>+ 값 표시기</button>
-          <button type="button" onclick={() => addWidget("label")}>+ 문구</button>
+          <button type="button" onclick={autoLayoutFromTags}>{m.autoLayout}</button>
+          <button type="button" onclick={() => addWidget("tank")}>+ {m.widgetKind.tank}</button>
+          <button type="button" onclick={() => addWidget("gauge")}>+ {m.widgetKind.gauge}</button>
+          <button type="button" onclick={() => addWidget("pump")}>+ {m.widgetKind.pump}</button>
+          <button type="button" onclick={() => addWidget("valve")}>+ {m.widgetKind.valve}</button>
+          <button type="button" onclick={() => addWidget("lamp")}>+ {m.widgetKind.lamp}</button>
+          <button type="button" onclick={() => addWidget("value")}>+ {m.widgetKind.value}</button>
+          <button type="button" onclick={() => addWidget("label")}>+ {m.widgetKind.label}</button>
           <label class="snap-toggle">
-            <input type="checkbox" bind:checked={snapGrid} /> 10px 스냅
+            <input type="checkbox" bind:checked={snapGrid} /> {m.snap10}
           </label>
           <button type="button" class="primary-btn" disabled={busy} onclick={() => void saveScreens()}>
-            화면 저장
+            {m.saveScreen}
           </button>
         {/if}
       </div>
@@ -560,7 +553,7 @@
                 font-size="12"
                 font-weight="600"
               >
-                {active ? "운전 (ON)" : "정지 (OFF)"}
+                {active ? m.pumpOn : m.pumpOff}
               </text>
             {:else if w.kind === "lamp"}
               {@const cx = w.width / 2}
@@ -581,7 +574,7 @@
                 font-size="12"
                 font-weight="600"
               >
-                {active ? "점등 (ON)" : "소등 (OFF)"}
+                {active ? m.lampOn : m.lampOff}
               </text>
             {:else if w.kind === "value"}
               <text
@@ -612,46 +605,46 @@
     </div>
 
     {#if editing && editScreen}
-      <aside class="graphic-inspector" aria-label="화면 및 위젯 속성 편집">
-        <h4>화면 속성</h4>
+      <aside class="graphic-inspector" aria-label={m.inspectorAria}>
+        <h4>{m.screenProps}</h4>
         <label>
-          화면 이름
+          {m.screenName}
           <input bind:value={editScreen.name} maxlength="64" />
         </label>
         <div class="row-2">
           <label>
-            가로(px)
+            {m.widthPx}
             <input type="number" min="200" max="3840" bind:value={editScreen.width} />
           </label>
           <label>
-            세로(px)
+            {m.heightPx}
             <input type="number" min="120" max="2160" bind:value={editScreen.height} />
           </label>
         </div>
 
         {#if selectedWidget}
-          <h4>선택된 위젯 ({selectedWidget.id})</h4>
+          <h4>{m.selectedWidget(selectedWidget.id)}</h4>
           <label>
-            표시 이름
+            {m.displayName}
             <input bind:value={selectedWidget.label} maxlength="64" />
           </label>
           <label>
-            종류
+            {m.kind}
             <select bind:value={selectedWidget.kind}>
-              <option value="tank">탱크</option>
-              <option value="gauge">게이지</option>
-              <option value="pump">펌프</option>
-              <option value="valve">밸브</option>
-              <option value="lamp">상태 램프</option>
-              <option value="value">값 표시기</option>
-              <option value="label">문구</option>
+              <option value="tank">{m.widgetKind.tank}</option>
+              <option value="gauge">{m.widgetKind.gauge}</option>
+              <option value="pump">{m.widgetKind.pump}</option>
+              <option value="valve">{m.widgetKind.valve}</option>
+              <option value="lamp">{m.widgetKind.lamp}</option>
+              <option value="value">{m.widgetKind.value}</option>
+              <option value="label">{m.widgetKind.label}</option>
             </select>
           </label>
           {#if selectedWidget.kind !== "label"}
             <label>
-              연결 태그
+              {m.linkedTag}
               <select bind:value={selectedWidget.tag}>
-                <option value={null}>(연결 안 함)</option>
+                <option value={null}>{m.notLinked}</option>
                 {#each store.tags as t (t.name)}
                   <option value={t.name}>{t.name} ({t.kind})</option>
                 {/each}
@@ -660,41 +653,41 @@
           {/if}
           <div class="row-2">
             <label>
-              X 좌표
+              {m.xCoord}
               <input type="number" min="0" bind:value={selectedWidget.x} />
             </label>
             <label>
-              Y 좌표
+              {m.yCoord}
               <input type="number" min="0" bind:value={selectedWidget.y} />
             </label>
           </div>
           <div class="row-2">
             <label>
-              가로 폭
+              {m.widgetWidth}
               <input type="number" min="20" bind:value={selectedWidget.width} />
             </label>
             <label>
-              세로 높이
+              {m.widgetHeight}
               <input type="number" min="20" bind:value={selectedWidget.height} />
             </label>
           </div>
           {#if selectedWidget.kind === "tank" || selectedWidget.kind === "gauge"}
             <div class="row-2">
               <label>
-                표시 하한(min)
+                {m.minLabel}
                 <input type="number" step="any" bind:value={selectedWidget.min} />
               </label>
               <label>
-                표시 상한(max)
+                {m.maxLabel}
                 <input type="number" step="any" bind:value={selectedWidget.max} />
               </label>
             </div>
           {/if}
           <button type="button" class="danger-btn" onclick={removeSelectedWidget}>
-            선택 위젯 삭제
+            {m.deleteWidget}
           </button>
         {:else}
-          <p class="muted">캔버스에서 위젯을 클릭하거나 위에서 새 위젯을 추가하세요.</p>
+          <p class="muted">{m.canvasHint}</p>
         {/if}
       </aside>
     {/if}

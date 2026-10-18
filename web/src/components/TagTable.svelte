@@ -3,7 +3,7 @@
 <script lang="ts">
   import { formatTime, formatValue, severityOfState } from "../lib/format";
   import type { Store } from "../lib/store.svelte";
-  import { alarmStateLabel, ko } from "../lib/strings";
+  import { stateLabel, m } from "../lib/i18n.svelte";
   import type { TagSnapshot } from "../lib/types";
   import { visibleRange } from "../lib/window";
   import StateChip from "./StateChip.svelte";
@@ -36,23 +36,23 @@
   }
 </script>
 
-<section class="wrap" aria-label={ko.tags}>
+<section class="wrap" aria-label={m.tags}>
   <div class="tools">
     <label>
-      <span class="sr-only">{ko.filterLabel}</span>
-      <input type="search" placeholder={ko.filterPlaceholder} bind:value={filter} />
+      <span class="sr-only">{m.filterLabel}</span>
+      <input type="search" placeholder={m.filterPlaceholder} bind:value={filter} />
     </label>
     <span class="count">{total}</span>
   </div>
 
-  <div class="table" role="table" aria-rowcount={total + 1} aria-label={ko.tags}>
+  <div class="table" role="table" aria-rowcount={total + 1} aria-label={m.tags}>
     <div class="head" role="rowgroup">
       <div class="row" role="row" aria-rowindex="1">
-        <div role="columnheader">{ko.colName}</div>
-        <div role="columnheader" class="num">{ko.colValue}</div>
-        <div role="columnheader">{ko.colState}</div>
-        <div role="columnheader">{ko.colChanged}</div>
-        <div role="columnheader">{ko.colDevice}</div>
+        <div role="columnheader">{m.colName}</div>
+        <div role="columnheader" class="num">{m.colValue}</div>
+        <div role="columnheader">{m.colState}</div>
+        <div role="columnheader">{m.colChanged}</div>
+        <div role="columnheader">{m.colDevice}</div>
       </div>
     </div>
 
@@ -69,15 +69,15 @@
             <div class="row" role="row" aria-rowindex={pos + 2} style:top="{pos * ROW}px">
               <div role="cell" class="name">{t.name}</div>
               <div role="cell" class="num" class:stale={t.quality === "bad"}>
-                {formatValue(t.value, ko.on, ko.off, ko.noValue)}
+                {formatValue(t.value, m.on, m.off, m.noValue)}
                 {#if t.kind === "analog"}<span class="unit">{t.unit_text}</span>{/if}
-                {#if t.quality === "bad" && t.value !== null}<span class="hint">({ko.lastValue})</span>{/if}
+                {#if t.quality === "bad" && t.value !== null}<span class="hint">({m.lastValue})</span>{/if}
               </div>
               <div role="cell">
                 {#if t.quality === "bad"}
-                  <StateChip severity="bad" label={ko.badQuality} />
+                  <StateChip severity="bad" label={m.badQuality} />
                 {:else if t.alarm_state}
-                  <StateChip severity={severityOfState(t.alarm_state)} label={alarmStateLabel[t.alarm_state]} />
+                  <StateChip severity={severityOfState(t.alarm_state)} label={stateLabel(t.alarm_state)} />
                 {/if}
               </div>
               <div role="cell" class="muted">{formatTime(t.changed_ms)}</div>
@@ -87,7 +87,7 @@
         {/each}
       </div>
       {#if total === 0}
-        <p class="empty">{filter.trim() ? ko.noMatch : ko.noData}</p>
+        <p class="empty">{filter.trim() ? m.noMatch : m.noData}</p>
       {/if}
     </div>
   </div>

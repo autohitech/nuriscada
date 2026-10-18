@@ -3,7 +3,7 @@
 <script lang="ts">
   import { formatMicros } from "../lib/format";
   import type { Store } from "../lib/store.svelte";
-  import { ko } from "../lib/strings";
+  import { LOCALES, LOCALE_NAMES, i18n, m, setLocale, type Locale } from "../lib/i18n.svelte";
   import StateChip from "./StateChip.svelte";
 
   let {
@@ -20,56 +20,66 @@
   );
   const details = $derived(
     store.devices
-      .map((d) => `${d.name}: ${d.connected ? ko.connected : ko.badQuality}, ${ko.scans} ${d.scans}, ${ko.jitter} ${formatMicros(d.jitter_p99_us)}`)
+      .map((d) => `${d.name}: ${d.connected ? m.connected : m.badQuality}, ${m.scans} ${d.scans}, ${m.jitter} ${formatMicros(d.jitter_p99_us)}`)
       .join("\n"),
   );
 
   const themeLabel = $derived(
-    theme === "light" ? ko.themeLight : theme === "contrast" ? ko.themeContrast : ko.themeDark,
+    theme === "light" ? m.themeLight : theme === "contrast" ? m.themeContrast : m.themeDark,
   );
 </script>
 
 <header class="bar">
-  <h1>{ko.appTitle}</h1>
+  <h1>{m.appTitle}</h1>
 
   <div class="group" role="status" aria-live="polite">
-    {#if store.archiveError}<span role="alert" title={store.archiveError}><StateChip severity="critical" label="알람 기록 오류" /></span>{/if}
+    {#if store.archiveError}<span role="alert" title={store.archiveError}><StateChip severity="critical" label={m.archiveError} /></span>{/if}
     {#if store.connected}
-      <StateChip severity="normal" label={ko.connected} />
+      <StateChip severity="normal" label={m.connected} />
     {:else}
-      <StateChip severity="bad" label={ko.reconnecting} />
+      <StateChip severity="bad" label={m.reconnecting} />
     {/if}
     {#if store.activeNames.length > 0}
-      <StateChip severity="critical" label={`${ko.alarms} ${store.activeNames.length}`} />
+      <StateChip severity="critical" label={`${m.alarms} ${store.activeNames.length}`} />
     {:else}
-      <StateChip severity="normal" label={`${ko.alarms} 0`} />
+      <StateChip severity="normal" label={`${m.alarms} 0`} />
     {/if}
   </div>
 
   {#if store.devices.length >= COMPACT_FROM}
     <p class="devices summary" title={details}>
-      <span class="dev">{ko.devices}</span>
+      <span class="dev">{m.devices}</span>
       <StateChip
         severity={connectedCount === store.devices.length ? "normal" : "bad"}
-        label={ko.devicesSummary(store.devices.length, connectedCount)}
+        label={m.devicesSummary(store.devices.length, connectedCount)}
       />
-      <span class="muted">{ko.jitter} {formatMicros(worstJitter)}</span>
+      <span class="muted">{m.jitter} {formatMicros(worstJitter)}</span>
     </p>
   {:else}
-  <ul class="devices" aria-label={ko.devices}>
+  <ul class="devices" aria-label={m.devices}>
     {#each store.devices as d (d.name)}
       <li title={d.last_error ?? ""}>
         <span class="dev">{d.name}</span>
-        <StateChip severity={d.connected ? "normal" : "bad"} label={d.connected ? ko.connected : ko.badQuality} />
-        <span class="muted">{ko.scans} {d.scans}</span>
-        <span class="muted">{ko.jitter} {formatMicros(d.jitter_p99_us)}</span>
+        <StateChip severity={d.connected ? "normal" : "bad"} label={d.connected ? m.connected : m.badQuality} />
+        <span class="muted">{m.scans} {d.scans}</span>
+        <span class="muted">{m.jitter} {formatMicros(d.jitter_p99_us)}</span>
       </li>
     {/each}
   </ul>
   {/if}
 
-  <button type="button" class="theme" onclick={onTheme} aria-label={`${ko.theme}: ${themeLabel}`}>
-    {ko.theme}: {themeLabel}
+  <label class="lang">
+    <span class="sr-only">{m.language}</span>
+    <select
+      value={i18n.locale}
+      onchange={(e) => setLocale((e.currentTarget as HTMLSelectElement).value as Locale)}
+    >
+      {#each LOCALES as code (code)}<option value={code}>{LOCALE_NAMES[code]}</option>{/each}
+    </select>
+  </label>
+
+  <button type="button" class="theme" onclick={onTheme} aria-label={`${m.theme}: ${themeLabel}`}>
+    {m.theme}: {themeLabel}
   </button>
 </header>
 
@@ -115,6 +125,23 @@
     color: var(--muted);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
+  }
+  .lang select {
+    min-height: 32px;
+    padding: 4px 8px;
+    color: var(--text);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font: inherit;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .theme {
     min-height: 32px;

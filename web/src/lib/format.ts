@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright NuriScada contributors
 
+import { localeTag } from "./i18n.svelte";
 import type { AlarmEvent, AlarmState } from "./types";
 
 export type Severity = "normal" | "warn" | "critical" | "info" | "bad";
@@ -38,14 +39,24 @@ export function severityOfEvent(event: AlarmEvent): Severity {
   }
 }
 
-const number = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 2 });
+const numberFormats = new Map<string, Intl.NumberFormat>();
+
+function numberFormat(): Intl.NumberFormat {
+  const tag = localeTag();
+  let f = numberFormats.get(tag);
+  if (!f) {
+    f = new Intl.NumberFormat(tag, { maximumFractionDigits: 2 });
+    numberFormats.set(tag, f);
+  }
+  return f;
+}
 
 /** 값을 화면 문자열로. 숫자는 소수 둘째 자리까지, 불리언은 문구로 바꾼다. */
-export function formatValue(value: number | boolean | null, on = "켜짐", off = "꺼짐", none = "—"): string {
+export function formatValue(value: number | boolean | null, on = "ON", off = "OFF", none = "—"): string {
   if (value === null) return none;
   if (typeof value === "boolean") return value ? on : off;
-  if (Object.is(value, -0)) return number.format(0);
-  return number.format(value);
+  if (Object.is(value, -0)) return numberFormat().format(0);
+  return numberFormat().format(value);
 }
 
 // 24시간제 `HH:MM:SS`. 언어와 무관하게 같은 모양으로 보이도록 영국식 로캘을 쓴다.
@@ -66,4 +77,9 @@ export function formatTime(ms: number): string {
 export function formatMicros(us: number | null): string {
   if (us === null) return "—";
   return `${(us / 1000).toFixed(1)} ms`;
+}
+
+/** UTC 밀리초를 현재 언어에 맞는 날짜·시각 문자열로. */
+export function formatDateTime(ms: number): string {
+  return new Date(ms).toLocaleString(localeTag());
 }

@@ -158,8 +158,8 @@ describe("connect", () => {
 describe("format", () => {
   it("formats values", () => {
     expect(formatValue(null)).toBe("—");
-    expect(formatValue(true)).toBe("켜짐");
-    expect(formatValue(false)).toBe("꺼짐");
+    expect(formatValue(true)).toBe("ON");
+    expect(formatValue(false)).toBe("OFF");
     expect(formatValue(12.345)).toBe("12.35");
     expect(formatValue(-0)).toBe("0");
     expect(formatValue(1000)).toBe("1,000");
