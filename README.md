@@ -13,6 +13,7 @@ NuriScada는 Windows, Linux, macOS에서 동작하는 무료 오픈소스 SCADA 
 | [고품질 SCADA 요구사항](docs/requirements/scada-quality-requirements.md) | 그래픽·SVG, UI·UX 디자인 시스템, 실시간성, 알람, 보안, 호환성 요구 (초안) |
 | [의존성·라이선스 정책](docs/requirements/dependency-license-policy.md) | 쓸 수 있는 라이선스, SBOM, 고지, 프로토콜 구현 원칙 (초안) |
 | [결정 기록](docs/decisions/) | 확정한 결정 |
+| [설계 0001: 첫 수직 조각](docs/design/0001-vertical-slice-1.md) | 첫 구현 범위, 수용 기준, 구조, 작업 분해 (초안) |
 
 ## 방향
 
@@ -29,6 +30,7 @@ NuriScada는 Windows, Linux, macOS에서 동작하는 무료 오픈소스 SCADA 
 
 | 항목 | 결정 | 근거 |
 |---|---|---|
+| 개발 위치 | 구현 코드와 문서를 이 저장소에서 직접 개발 | [결정 기록](docs/decisions/0012-development-location.md) |
 | 제품 이름 | NuriScada (기존 제품 이름은 쓰지 않음) | [결정 기록](docs/decisions/0011-project-name-nuriscada.md) |
 | 라이선스 | Apache-2.0, 소스 공개, 상업적 사용 허용, 보증·책임 없음 | [결정 기록](docs/decisions/0001-license-apache-2.0.md) |
 | 지원 대상 | Windows 10+, 주요 Linux, macOS 최신 두 버전, x86-64와 arm64 (임베디드 소형 기기는 1단계 제외) | 2026-10-18 |
