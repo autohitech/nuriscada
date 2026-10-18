@@ -5,7 +5,8 @@
 //!
 //! 사용: `nuriscada-server --config project.toml [--listen 127.0.0.1:8080] [--web-dir web/dist] [--allow-external]`
 //!
-//! `--web-dir`을 주지 않으면 현재 디렉터리의 `web/dist`가 있을 때 그것을 쓴다.
+//! `--web-dir`을 주지 않으면 실행 파일 옆의 `web`(배포 묶음), 실행 파일 상위의 `web`(`bin/` 아래 설치),
+//! 현재 디렉터리의 `web/dist`(개발) 순서로 찾는다.
 //!
 //! 운영 서버는 로컬 계정 인증을 요구한다. 최초 관리자 설정은 --init-admin으로 수행한다.
 //! 외부 수신은 --allow-external과 HTTPS 프록시를 사용하며, 공개 배치는 --public-read-only로 고정한다.
@@ -21,6 +22,22 @@ use nuriscada_server::{
     router_with_operations, start_scanners,
 };
 use tokio::net::TcpListener;
+
+/// 웹 화면 디렉터리를 찾는다: 배포 묶음의 `web`, 개발 중의 `web/dist`.
+fn default_web_dir() -> Option<std::path::PathBuf> {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf));
+    let mut candidates = Vec::new();
+    if let Some(dir) = exe_dir {
+        candidates.push(dir.join("web"));
+        candidates.push(dir.join("..").join("web"));
+    }
+    candidates.push(std::path::PathBuf::from("web/dist"));
+    candidates
+        .into_iter()
+        .find(|c| c.join("index.html").is_file())
+}
 
 fn usage() -> ExitCode {
     eprintln!(
@@ -52,6 +69,14 @@ async fn main() -> ExitCode {
             "--password-stdin" => password_stdin = true,
             "--enable-writes" => enable_writes = true,
             "--public-read-only" => public_read_only = true,
+            "--version" | "-V" => {
+                println!("nuriscada-server {}", env!("CARGO_PKG_VERSION"));
+                return ExitCode::SUCCESS;
+            }
+            "--help" | "-h" => {
+                usage();
+                return ExitCode::SUCCESS;
+            }
             _ => return usage(),
         }
     }
@@ -194,11 +219,9 @@ async fn main() -> ExitCode {
     operations.attach_scanners(scanners).await;
     println!("수신 시작: http://{bound}/api/v1/status");
 
-    let web_dir = web_dir.map(std::path::PathBuf::from).or_else(|| {
-        std::path::Path::new("web/dist")
-            .is_dir()
-            .then(|| "web/dist".into())
-    });
+    let web_dir = web_dir
+        .map(std::path::PathBuf::from)
+        .or_else(default_web_dir);
     if let Some(dir) = &web_dir {
         if let (Ok(web), Ok(data)) = (std::fs::canonicalize(dir), std::fs::canonicalize(&data_dir))
             && data.starts_with(web)

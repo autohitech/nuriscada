@@ -10,6 +10,8 @@ NuriScada는 Windows, Linux, macOS에서 동작하는 무료 오픈소스 SCADA 
 
 | 문서 | 내용 |
 |---|---|
+| [사용자 문서](docs/user/README.md) | 시작하기, 프로젝트 설정, 운영과 보안, 제한 사항, 문제 해결 (얼리 액세스) |
+| [릴리스 절차](docs/release.md) | 배포 묶음을 만드는 방법 |
 | [고품질 SCADA 요구사항](docs/requirements/scada-quality-requirements.md) | 그래픽·SVG, UI·UX 디자인 시스템, 실시간성, 알람, 보안, 호환성 요구 (초안) |
 | [의존성·라이선스 정책](docs/requirements/dependency-license-policy.md) | 쓸 수 있는 라이선스, SBOM, 고지, 프로토콜 구현 원칙 (초안) |
 | [결정 기록](docs/decisions/) | 확정한 결정 |
