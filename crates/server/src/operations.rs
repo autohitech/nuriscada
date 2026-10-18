@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use nuriscada_project::Project;
-use nuriscada_scheduler::{AlarmRecord, Hub, now_ms};
+use nuriscada_scheduler::{AlarmRecord, Hub, Quality, TagSnapshot, TagValue, now_ms};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -272,7 +272,9 @@ impl Operations {
             CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, name TEXT NOT NULL, expires INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS audit(seq INTEGER PRIMARY KEY, payload TEXT NOT NULL, previous TEXT NOT NULL, hash TEXT NOT NULL);")?;
         db.execute_batch("CREATE TABLE IF NOT EXISTS alarms(id INTEGER PRIMARY KEY, run TEXT NOT NULL, seq INTEGER NOT NULL, tag TEXT NOT NULL, data TEXT NOT NULL, ack_actor TEXT, ack_ms INTEGER, UNIQUE(run,seq));
-            CREATE INDEX IF NOT EXISTS alarms_tag_id ON alarms(tag,id);")?;
+            CREATE INDEX IF NOT EXISTS alarms_tag_id ON alarms(tag,id);
+            CREATE TABLE IF NOT EXISTS tag_history(id INTEGER PRIMARY KEY, tag TEXT NOT NULL, time_ms INTEGER NOT NULL, kind TEXT NOT NULL, value REAL, quality TEXT NOT NULL, alarm_state TEXT);
+            CREATE INDEX IF NOT EXISTS tag_history_tag_time ON tag_history(tag,time_ms,id);")?;
         let ops = Arc::new(Self {
             run_id: random_hex()?,
             archive_error: Mutex::new(None),
@@ -627,6 +629,100 @@ impl Operations {
         Ok(changed)
     }
 
+    /// 변경되거나 주기 기준을 넘긴 태그 값 표본을 저장하고 태그당 최신 10,000개로 제한한다.
+    pub fn save_tag_samples(&self, samples: &[TagSnapshot]) -> Result<()> {
+        if samples.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.db.lock().map_err(|_| "DB 잠금 오류")?;
+        let tx = conn.transaction()?;
+        for s in samples {
+            let val: Option<f64> = s.value.map(|v| match v {
+                TagValue::Number(n) => n,
+                TagValue::Bool(b) => {
+                    if b {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+            });
+            let quality = match s.quality {
+                Quality::Good => "good",
+                Quality::Bad => "bad",
+            };
+            let t = i64::try_from(if s.changed_ms == 0 {
+                now_ms()
+            } else {
+                s.changed_ms
+            })?;
+            tx.execute(
+                "INSERT INTO tag_history(tag,time_ms,kind,value,quality,alarm_state) VALUES (?1,?2,?3,?4,?5,?6)",
+                params![s.name, t, s.kind, val, quality, s.alarm_state],
+            )?;
+            let last_id = tx.last_insert_rowid();
+            if last_id % 200 == 0 {
+                tx.execute(
+                    "DELETE FROM tag_history WHERE tag=?1 AND id NOT IN (SELECT id FROM tag_history WHERE tag=?1 ORDER BY id DESC LIMIT 10000)",
+                    [&s.name],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// 태그의 시계열 이력을 조회한다(시간 오름차순, 최근 limit개).
+    pub fn tag_history(
+        &self,
+        tag: &str,
+        from_ms: Option<u64>,
+        to_ms: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<Value>> {
+        let limit = limit.clamp(1, 2000);
+        let from = i64::try_from(from_ms.unwrap_or(0)).unwrap_or(0);
+        let to = i64::try_from(to_ms.unwrap_or(u64::MAX)).unwrap_or(i64::MAX);
+        let conn = self.db.lock().map_err(|_| "DB 잠금 오류")?;
+        let mut query = conn.prepare(
+            "SELECT id,time_ms,kind,value,quality,alarm_state FROM tag_history \
+             WHERE tag=?1 AND time_ms>=?2 AND time_ms<=?3 ORDER BY time_ms DESC, id DESC LIMIT ?4",
+        )?;
+        let rows = query.query_map(
+            params![tag, from, to, i64::try_from(limit).unwrap_or(500)],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<f64>>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, Option<String>>(5)?,
+                ))
+            },
+        )?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, time_ms, kind, val, quality, alarm_state) = row?;
+            let value = match (kind.as_str(), val) {
+                ("digital", Some(n)) => json!(n != 0.0),
+                (_, Some(n)) => json!(n),
+                (_, None) => Value::Null,
+            };
+            out.push(json!({
+                "id": id,
+                "time_ms": time_ms,
+                "kind": kind,
+                "value": value,
+                "numeric": val,
+                "quality": quality,
+                "alarm_state": alarm_state,
+            }));
+        }
+        out.reverse();
+        Ok(out)
+    }
+
     /// 기록 작업의 오류 상태. 한 번 발생한 손실·저장 오류는 숨기지 않는다.
     pub fn archive_status(&self) -> Value {
         let error = self
@@ -637,12 +733,15 @@ impl Operations {
         json!({"healthy":error.is_none(),"error":error})
     }
 
-    /// 최근 알람을 200 ms마다 저장한다. 오류·링 버퍼 손실을 진단 상태에 남긴다.
+    /// 최근 알람과 태그 값 표본을 200 ms마다 저장한다. 오류·링 버퍼 손실을 진단 상태에 남긴다.
     pub fn start_archive(self: &Arc<Self>, hub: Arc<Hub>) -> AlarmArchive {
         let (shutdown, mut stop) = tokio::sync::watch::channel(false);
         let ops = self.clone();
         let task = tokio::spawn(async move {
+            type SavedTagState = (u64, Option<TagValue>, Quality, Option<&'static str>);
             let mut cursor = 0;
+            let mut last_tag_saved: std::collections::HashMap<String, SavedTagState> =
+                std::collections::HashMap::new();
             let mut tick = tokio::time::interval(Duration::from_millis(200));
             loop {
                 tokio::select! {_=tick.tick()=>{},changed=stop.changed()=>{if changed.is_err(){return;}}}
@@ -671,6 +770,39 @@ impl Operations {
                                 *error = Some(format!("알람 저장 실패: {result:?}"));
                             }
                         }
+                    }
+                }
+                let now = now_ms();
+                let mut samples = Vec::new();
+                for mut t in hub.tags() {
+                    if t.changed_ms == 0 && t.value.is_none() {
+                        continue;
+                    }
+                    let should_save = match last_tag_saved.get(&t.name) {
+                        None => true,
+                        Some((saved_ms, val, q, st)) => {
+                            *val != t.value
+                                || *q != t.quality
+                                || *st != t.alarm_state
+                                || now.saturating_sub(*saved_ms) >= 5_000
+                        }
+                    };
+                    if should_save {
+                        if now.saturating_sub(t.changed_ms) >= 1_000 {
+                            t.changed_ms = now;
+                        }
+                        last_tag_saved
+                            .insert(t.name.clone(), (now, t.value, t.quality, t.alarm_state));
+                        samples.push(t);
+                    }
+                }
+                if !samples.is_empty() {
+                    let db = ops.clone();
+                    if let result @ (Err(_) | Ok(Err(_))) =
+                        tokio::task::spawn_blocking(move || db.save_tag_samples(&samples)).await
+                        && let Ok(mut error) = ops.archive_error.lock()
+                    {
+                        *error = Some(format!("태그 이력 저장 실패: {result:?}"));
                     }
                 }
                 if *stop.borrow() {

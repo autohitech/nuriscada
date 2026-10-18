@@ -303,6 +303,57 @@ pub(super) async fn alarm_history(
     Ok(Json(json!({"records":rows})))
 }
 
+#[derive(Deserialize)]
+pub(super) struct TagHistoryQuery {
+    tag: String,
+    from_ms: Option<u64>,
+    to_ms: Option<u64>,
+    #[serde(default = "default_history_limit")]
+    limit: usize,
+    format: Option<String>,
+}
+
+fn default_history_limit() -> usize {
+    500
+}
+
+pub(super) async fn tag_history(
+    State(state): State<AppState>,
+    Query(q): Query<TagHistoryQuery>,
+) -> Result<Response> {
+    let ops = operations(&state)?;
+    if q.tag.is_empty() || q.tag.len() > 256 {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "올바른 태그 이름이 필요하다",
+        ));
+    }
+    let tag_name = q.tag.clone();
+    let rows = blocking(move || ops.tag_history(&q.tag, q.from_ms, q.to_ms, q.limit)).await?;
+    if q.format.as_deref() == Some("csv") {
+        let mut csv = String::from("id,time_ms,tag,kind,value,quality,alarm_state\n");
+        for r in &rows {
+            let id = r["id"].as_i64().unwrap_or(0);
+            let time_ms = r["time_ms"].as_i64().unwrap_or(0);
+            let kind = r["kind"].as_str().unwrap_or("");
+            let val = match &r["value"] {
+                Value::Null => String::new(),
+                Value::Bool(b) => b.to_string(),
+                Value::Number(n) => n.to_string(),
+                other => other.to_string(),
+            };
+            let quality = r["quality"].as_str().unwrap_or("");
+            let alarm = r["alarm_state"].as_str().unwrap_or("");
+            let escaped_tag = format!("\"{}\"", tag_name.replace('"', "\"\""));
+            csv.push_str(&format!(
+                "{id},{time_ms},{escaped_tag},{kind},{val},{quality},{alarm}\n"
+            ));
+        }
+        return Ok(([(header::CONTENT_TYPE, "text/csv; charset=utf-8")], csv).into_response());
+    }
+    Ok(Json(json!({"tag": tag_name, "samples": rows})).into_response())
+}
+
 pub(super) async fn acknowledge(
     State(state): State<AppState>,
     Extension(user): Extension<Principal>,

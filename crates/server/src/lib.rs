@@ -226,6 +226,7 @@ fn build_router(
             "/api/v1/history/alarms/{id}/ack",
             post(control::acknowledge),
         )
+        .route("/api/v1/history/tags", get(control::tag_history))
         .route("/api/v1/control/tags", get(control::control_tags))
         .route("/api/v1/control/tags/{name}", post(control::write_tag))
         .route(

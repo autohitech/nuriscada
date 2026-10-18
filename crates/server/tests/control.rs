@@ -525,3 +525,54 @@ async fn project_configuration_can_be_edited_and_reloaded_by_local_admin() {
     );
     st.ops.verify_audit().unwrap();
 }
+
+#[tokio::test]
+async fn tag_value_history_is_persisted_and_exportable_as_json_and_csv() {
+    let st = start(true, false).await;
+    let viewer = login(&st, "viewer").await;
+    st.sim.set_holding(0, &[10]);
+    tokio::time::sleep(Duration::from_millis(260)).await;
+    st.sim.set_holding(0, &[35]);
+    let mut samples = Vec::new();
+    for _ in 0..30 {
+        let (code, _, body) = request(
+            st.addr,
+            "GET",
+            "/api/v1/history/tags?tag=LEVEL&limit=100",
+            &viewer,
+            json!({}),
+            "",
+        )
+        .await;
+        assert_eq!(code, 200);
+        samples = body["samples"].as_array().unwrap().clone();
+        if samples.iter().any(|s| s["value"] == json!(350.0)) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    assert!(
+        samples.iter().any(|s| s["value"] == json!(350.0)),
+        "samples={samples:?}"
+    );
+
+    // CSV 내보내기 확인
+    let mut stream = TcpStream::connect(st.addr).await.unwrap();
+    stream
+        .write_all(
+            format!(
+                "GET /api/v1/history/tags?tag=LEVEL&format=csv HTTP/1.1\r\nHost: {}\r\nCookie: {viewer}\r\nConnection: close\r\n\r\n",
+                st.addr
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut raw = String::new();
+    stream.read_to_string(&mut raw).await.unwrap();
+    let (head, csv) = raw.split_once("\r\n\r\n").unwrap();
+    assert!(head.starts_with("HTTP/1.1 200"));
+    assert!(head.to_lowercase().contains("content-type: text/csv"));
+    assert!(csv.starts_with("id,time_ms,tag,kind,value,quality,alarm_state\n"));
+    assert!(csv.contains("\"LEVEL\",analog,350.0,good"), "csv={csv}");
+}
