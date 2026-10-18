@@ -175,8 +175,9 @@ def main():
             t.add(stage, arcname=name)
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     sums = out / "SHA256SUMS"
-    existing = [l for l in (sums.read_text().splitlines() if sums.exists() else []) if not l.endswith("  " + archive.name)]
-    sums.write_text("\n".join(existing + [f"{digest}  {archive.name}"]) + "\n")
+    existing = [l for l in (sums.read_text(encoding="utf-8").splitlines() if sums.exists() else []) if not l.endswith("  " + archive.name)]
+    # Windows에서도 줄 끝을 LF로 쓴다(CRLF면 macOS·Linux의 `shasum -c`가 파일 이름을 못 찾는다).
+    sums.write_bytes(("\n".join(existing + [f"{digest}  {archive.name}"]) + "\n").encode("utf-8"))
     print(f"묶음: {archive} ({archive.stat().st_size / 1_048_576:.1f} MiB)")
     print(f"SHA-256: {digest}")
 
