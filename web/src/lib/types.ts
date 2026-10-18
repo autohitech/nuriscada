@@ -106,3 +106,13 @@ export interface ProjectSpec {
   device: DeviceSpec[];
   tag: TagSpec[];
 }
+
+export interface TagHistorySample {
+  id: number;
+  time_ms: number;
+  kind: "analog" | "digital";
+  value: number | boolean | null;
+  numeric: number | null;
+  quality: Quality;
+  alarm_state: AlarmState | null;
+}

@@ -2,7 +2,7 @@
 <!-- Copyright NuriScada contributors -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { AlarmRecord, DeviceSpec, ProjectSpec, TagSpec } from "../lib/types";
+  import type { AlarmRecord, DeviceSpec, ProjectSpec, TagHistorySample, TagSpec } from "../lib/types";
   import { alarmEventLabel } from "../lib/strings";
   export interface SessionDoc {
     authentication_required: boolean;
@@ -27,9 +27,38 @@
   let newRole = $state("viewer");
   let history = $state<{id:number;data:AlarmRecord;ack_actor:string|null;ack_ms:number|null}[]>([]);
   let historyTag = $state("");
+  let trendTag = $state("TANK_LEVEL");
+  let trendLimit = $state(200);
+  let trendSamples = $state<TagHistorySample[]>([]);
   let projectSpec = $state<ProjectSpec | null>(null);
   let projectToml = $state("");
   let stopped = false;
+
+  const trendStats = $derived.by(() => {
+    const nums = trendSamples.map((s) => s.numeric).filter((v): v is number => v !== null && Number.isFinite(v));
+    if (nums.length === 0) return null;
+    const min = Math.min(...nums);
+    const max = Math.max(...nums);
+    const span = max - min || 1;
+    const t0 = trendSamples[0]?.time_ms ?? 0;
+    const t1 = trendSamples[trendSamples.length - 1]?.time_ms ?? t0;
+    const dt = Math.max(t1 - t0, 1);
+    const points = trendSamples
+      .filter((s): s is TagHistorySample & { numeric: number } => s.numeric !== null && Number.isFinite(s.numeric))
+      .map((s) => {
+        const x = 16 + ((s.time_ms - t0) / dt) * 568;
+        const y = max === min ? 60 : 104 - ((s.numeric - min) / span) * 88;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ");
+    return { min, max, latest: nums[nums.length - 1], count: trendSamples.length, points };
+  });
+
+  async function loadTrend() {
+    if (!trendTag.trim()) { message = "조회할 태그 이름을 입력하세요."; return; }
+    const res = await request(`history/tags?tag=${encodeURIComponent(trendTag.trim())}&limit=${trendLimit}`) as { samples: TagHistorySample[] };
+    trendSamples = res.samples;
+  }
 
   async function request(path: string, body?: unknown) {
     const response = await fetch(`/api/v1/${path}`, body === undefined ? { cache: "no-store" } : {
@@ -359,6 +388,35 @@
         {/each}
       </div>
     </details>
+    <details>
+      <summary>태그 값 이력·트렌드·CSV 내보내기</summary>
+      <div class="inline">
+        <label>태그 이름 <input bind:value={trendTag} maxlength="256" required /></label>
+        <label>최대 표본 수 <input type="number" min="10" max="2000" bind:value={trendLimit} /></label>
+        <button type="button" disabled={busy} onclick={() => void perform(loadTrend)}>트렌드 조회</button>
+        {#if trendTag.trim()}
+          <a class="csv-link" href={`/api/v1/history/tags?tag=${encodeURIComponent(trendTag.trim())}&limit=${trendLimit}&format=csv`} download={`${trendTag.trim()}-history.csv`}>CSV 내려받기</a>
+        {/if}
+      </div>
+      {#if trendStats}
+        <p class="muted">표본 {trendStats.count}개 · 최소 {trendStats.min} · 최대 {trendStats.max} · 최신 {trendStats.latest}</p>
+        <svg class="trend-chart" viewBox="0 0 600 120" role="img" aria-label={`${trendTag} 시계열 트렌드`}>
+          <line x1="16" y1="16" x2="584" y2="16" stroke="var(--border)" stroke-dasharray="3,3" />
+          <line x1="16" y1="60" x2="584" y2="60" stroke="var(--border)" stroke-dasharray="3,3" />
+          <line x1="16" y1="104" x2="584" y2="104" stroke="var(--border)" />
+          {#if trendStats.points}
+            <polyline fill="none" stroke="var(--accent, #4ea1ff)" stroke-width="2" points={trendStats.points} />
+          {/if}
+        </svg>
+        <div class="audit">
+          {#each trendSamples.slice(-10).reverse() as sample (sample.id)}
+            <p><strong>#{sample.id}</strong> · {new Date(sample.time_ms).toLocaleTimeString()} · 값: {String(sample.value)} · 품질: {sample.quality}{sample.alarm_state ? ` · 알람: ${sample.alarm_state}` : ""}</p>
+          {/each}
+        </div>
+      {:else if trendSamples.length === 0}
+        <p class="muted">태그를 선택하고 트렌드 조회를 누르면 시계열 그래프와 최근 표본을 표시합니다.</p>
+      {/if}
+    </details>
   {/if}
   <p role="status" class="message">{message}</p>
 </section>
@@ -368,7 +426,7 @@
   .inline { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
   label { display: grid; gap: 4px; font-size: 12px; }
   .checkbox-label { display: flex; align-items: center; gap: 6px; padding-bottom: 6px; }
-  input, select, button { font: inherit; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); background: var(--surface-2); }
+  input, select, button, .csv-link { font: inherit; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); background: var(--surface-2); text-decoration: none; }
   button { cursor: pointer; } button:disabled { opacity: .5; cursor: default; }
   summary { cursor: pointer; padding: 6px 0; } p { margin: 6px 0; } .message { white-space: pre-wrap; }
   .muted { color: var(--muted); font-size: 12px; } .audit { overflow-wrap: anywhere; font-size: 12px; }
@@ -378,4 +436,5 @@
   .editor-row { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; display: grid; gap: 6px; }
   .sub-row { padding-top: 4px; border-top: 1px dashed var(--border); }
   .toml-preview { font-size: 12px; background: var(--surface-2); padding: 8px; border-radius: var(--radius); overflow: auto; max-height: 180px; }
+  .trend-chart { width: 100%; max-width: 600px; height: 120px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); margin: 6px 0; }
 </style>
