@@ -1,0 +1,62 @@
+name: nightly
+
+# 매일 밤 세 OS에서 부하를 길게 측정한다(결정 0005의 지터·용량 목표). 수동 실행도 된다.
+# 예약 실행은 기본 브랜치의 워크플로 파일만 쓴다. 결과는 아티팩트로 보관한다.
+on:
+  schedule:
+    - cron: "17 18 * * *" # 03:17 KST
+  workflow_dispatch:
+    inputs:
+      duration_s:
+        description: "측정 시간(초)"
+        default: "120"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  load:
+    name: 부하 측정 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: 측정 도구 빌드
+        id: load_build
+        run: cargo build --locked --release -p nuriscada-bench
+      - name: 태그 1만 개·클라이언트 50개·100 ms 측정
+        shell: bash
+        env:
+          DURATION_S: ${{ github.event.inputs.duration_s || '120' }}
+        run: |
+          set -o pipefail
+          cargo run --locked --release -p nuriscada-bench -- --tags 10000 --clients 50 --devices 10 --scan-ms 100 --change-pct 10 --duration-s "$DURATION_S" --check --json | tee load.json
+      - name: 측정 결과 보관
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-${{ matrix.os }}
+          path: load.json
+          if-no-files-found: warn
+      - name: 장기 시험 기록 도구 점검 (Linux·macOS)
+        if: always() && runner.os != 'Windows' && steps.load_build.outcome == 'success'
+        run: python3 scripts/soak.py --duration-s 10 --sample-s 2 --output soak-smoke
+      - name: 장기 시험 도구 점검 기록 보관
+        if: always() && runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-smoke-${{ matrix.os }}
+          path: |
+            soak-smoke/status.json
+            soak-smoke/samples.jsonl
+            soak-smoke/stdout.json
+            soak-smoke/stderr.log
+          if-no-files-found: warn
