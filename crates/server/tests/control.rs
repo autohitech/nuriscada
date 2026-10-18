@@ -598,3 +598,83 @@ async fn tag_value_history_is_persisted_and_exportable_as_json_and_csv() {
     assert!(csv.starts_with("id,time_ms,tag,kind,value,quality,alarm_state\n"));
     assert!(csv.contains("\"LEVEL\",analog,350.0,good"), "csv={csv}");
 }
+
+/// 기존 제품의 태그 파일 한 줄(AI)을 만든다: 공통 19개 + 고유 51개 필드.
+fn tagx_ai_line(name: &str) -> String {
+    let mut f: Vec<String> = vec![name.into(), "설명".into(), "1".into()];
+    f.extend(std::iter::repeat_n("0".to_string(), 16));
+    let mut s = vec!["0".to_string(); 51];
+    s[1] = "1".into(); // 국번
+    s[2] = "1".into(); // 주소
+    s[10] = "%".into(); // 단위
+    s[12] = "100".into(); // 표시 상한
+    s[14] = "100".into(); // 장치 상한
+    f.extend(s);
+    format!("AI,{},", f.join(","))
+}
+
+#[tokio::test]
+async fn tag_file_import_previews_then_merges_for_local_admin_only() {
+    let st = start(true, false).await;
+    let hdr = "X-NuriScada-Request: 1\r\n";
+    let url = "/api/v1/project/import";
+    let operator = login(&st, "operator").await;
+    let body = json!({"text": tagx_ai_line("IMP.A"), "format": "tagx", "default_device": "sim"});
+    assert_eq!(
+        request(st.addr, "POST", url, &operator, body.clone(), hdr)
+            .await
+            .0,
+        403
+    );
+
+    let admin = login(&st, "admin").await;
+    let count = |doc: &Value| doc["project"]["tag"].as_array().unwrap().len();
+    let (_, _, before) = request(st.addr, "GET", "/api/v1/project", &admin, json!({}), "").await;
+
+    // 미리보기(기본)는 보고서만 돌려주고 프로젝트를 바꾸지 않는다.
+    let (code, _, preview) = request(st.addr, "POST", url, &admin, body.clone(), hdr).await;
+    assert_eq!(code, 200, "{preview}");
+    assert_eq!(preview["applied"], false);
+    assert_eq!(preview["report"]["imported_tags"], 1);
+    let (_, _, same) = request(st.addr, "GET", "/api/v1/project", &admin, json!({}), "").await;
+    assert_eq!(count(&same), count(&before));
+
+    // 잘못된 요청은 거부한다.
+    let bad_format = json!({"text": "", "format": "xml"});
+    assert_eq!(
+        request(st.addr, "POST", url, &admin, bad_format, hdr)
+            .await
+            .0,
+        400
+    );
+    let no_device = json!({"text": tagx_ai_line("X"), "format": "tagx"});
+    assert_eq!(
+        request(st.addr, "POST", url, &admin, no_device, hdr)
+            .await
+            .0,
+        400
+    );
+    let wrong_device = json!({"text": "", "format": "tagx", "default_device": "nope"});
+    assert_eq!(
+        request(st.addr, "POST", url, &admin, wrong_device, hdr)
+            .await
+            .0,
+        400
+    );
+
+    // 병합하면 태그가 늘고 감사 기록에 남는다.
+    let mut merge = body;
+    merge["mode"] = json!("merge");
+    let (code, _, done) = request(st.addr, "POST", url, &admin, merge, hdr).await;
+    assert_eq!(code, 200, "{done}");
+    assert_eq!(done["applied"], true);
+    let (_, _, after) = request(st.addr, "GET", "/api/v1/project", &admin, json!({}), "").await;
+    assert_eq!(count(&after), count(&before) + 1);
+    assert!(
+        after["project"]["tag"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["name"] == "IMP.A")
+    );
+}
