@@ -68,6 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: 측정 도구 빌드
+        id: load_build
         run: cargo build --locked --release -p nuriscada-bench
       - name: 태그 1만 개·클라이언트 50개·100 ms 측정
         shell: bash
@@ -82,7 +83,7 @@ jobs:
           path: load.json
           if-no-files-found: warn
       - name: 장기 시험 기록 도구 점검 (Linux·macOS)
-        if: runner.os != 'Windows'
+        if: always() && runner.os != 'Windows' && steps.load_build.outcome == 'success'
         run: python3 scripts/soak.py --duration-s 10 --sample-s 2 --output soak-smoke
       - name: 장기 시험 도구 점검 기록 보관
         if: always() && runner.os != 'Windows'
