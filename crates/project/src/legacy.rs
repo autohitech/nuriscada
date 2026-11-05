@@ -272,6 +272,8 @@ pub struct ImportReport {
 /// 지원 레코드 형식:
 /// - 장치(`DEVICE` / `SCAN` / `PORT`):
 ///   `DEVICE,<이름>,<드라이버>,<호스트:포트>[,<스캔_ms>[,<타임아웃_ms>]]`
+///   드라이버는 `modbus-tcp`, `melsec-mc`, `xgt-fenet`, `fins-tcp`, `s7-tcp`이며
+///   흔한 표기(MODBUS, MELSEC, XGT, FINS, S7COMM 등)는 자동으로 변환한다.
 /// - 아날로그 태그(`AI` / `AO` / `ANALOG`):
 ///   `AI,<이름>,<장치>,<영역 또는 MODBUS 5자리 주소>,<주소>[,<단위>,<plc_base>,<plc_full>,<base>,<full>,<알람종류>,<hihi>,<high>,<low>,<lolo>,<gap>,<쓰기허용>]`
 /// - 디지털 태그(`DI` / `DO` / `DIGITAL`):
@@ -360,6 +362,54 @@ pub fn import_legacy_text(
                         detail: format!("드라이버 이름 '{drv_raw}'을 'modbus-tcp'로 변환했습니다."),
                     });
                     "modbus-tcp".to_string()
+                } else if drv_raw == "melsec-mc" {
+                    "melsec-mc".to_string()
+                } else if matches!(
+                    drv_upper.as_str(),
+                    "MELSECMC" | "MELSEC" | "MC" | "MELSEC-MC" | "MELSEC_MC"
+                ) {
+                    modified_items.push(ImportNotice {
+                        line: line_no,
+                        item: dev_name.to_string(),
+                        detail: format!("드라이버 이름 '{drv_raw}'을 'melsec-mc'로 변환했습니다."),
+                    });
+                    "melsec-mc".to_string()
+                } else if drv_raw == "xgt-fenet" {
+                    "xgt-fenet".to_string()
+                } else if matches!(
+                    drv_upper.as_str(),
+                    "XGT" | "XGTFENET" | "XGT_FENET" | "XGT-FENET"
+                ) {
+                    modified_items.push(ImportNotice {
+                        line: line_no,
+                        item: dev_name.to_string(),
+                        detail: format!("드라이버 이름 '{drv_raw}'을 'xgt-fenet'로 변환했습니다."),
+                    });
+                    "xgt-fenet".to_string()
+                } else if drv_raw == "fins-tcp" {
+                    "fins-tcp".to_string()
+                } else if matches!(
+                    drv_upper.as_str(),
+                    "FINS" | "FINSTCP" | "FINS_TCP" | "FINS-TCP"
+                ) {
+                    modified_items.push(ImportNotice {
+                        line: line_no,
+                        item: dev_name.to_string(),
+                        detail: format!("드라이버 이름 '{drv_raw}'을 'fins-tcp'로 변환했습니다."),
+                    });
+                    "fins-tcp".to_string()
+                } else if drv_raw == "s7-tcp" {
+                    "s7-tcp".to_string()
+                } else if matches!(
+                    drv_upper.as_str(),
+                    "S7" | "S7TCP" | "S7_TCP" | "S7-TCP" | "S7COMM" | "S7-COMM"
+                ) {
+                    modified_items.push(ImportNotice {
+                        line: line_no,
+                        item: dev_name.to_string(),
+                        detail: format!("드라이버 이름 '{drv_raw}'을 's7-tcp'로 변환했습니다."),
+                    });
+                    "s7-tcp".to_string()
                 } else {
                     ignored_items.push(ImportNotice {
                         line: line_no,
