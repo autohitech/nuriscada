@@ -89,7 +89,7 @@ AI,BAD_LINE,plc1,invalid_space,
 "#;
 
     let report = import_legacy_text(None, input, None).unwrap();
-    assert_eq!(report.imported_devices, 1);
+    assert_eq!(report.imported_devices, 2);
     assert_eq!(report.imported_tags, 3);
     assert_eq!(report.renamed_tags.len(), 1);
     assert_eq!(report.renamed_tags[0].original, "TANK_LEVEL");
@@ -115,6 +115,41 @@ AI,BAD_LINE,plc1,invalid_space,
 
     // SQ-M02 보고서 항목 검증: 바뀐 항목, 무시한 항목, 읽지 못한 항목이 모두 기록되어야 함
     assert!(!report.modified_items.is_empty());
-    assert!(report.ignored_items.len() >= 3); // 헤더 + MELSEC + ST
+    assert!(report.ignored_items.len() >= 2); // 헤더 + ST (MELSEC은 이제 가져온다)
     assert_eq!(report.unreadable_items.len(), 1);
+}
+
+#[test]
+fn 모든_드라이버_장치를_가져온다() {
+    let input = r#"
+DEVICE,m1,melsec-mc,127.0.0.1:5007
+SCAN,m2,MELSEC,127.0.0.1:5008
+PORT,x1,XGT,127.0.0.1:2004
+DEVICE,f1,FINS,127.0.0.1:9600
+SCAN,s1,S7COMM,127.0.0.1:102
+PORT,old,UNKNOWNBUS,127.0.0.1:1
+"#;
+    let report = import_legacy_text(None, input, None).unwrap();
+    assert_eq!(report.imported_devices, 5);
+    let drivers: Vec<(&str, &str)> = report
+        .project
+        .devices
+        .iter()
+        .map(|d| (d.name.as_str(), d.driver.as_str()))
+        .collect();
+    assert!(drivers.contains(&("m1", "melsec-mc")));
+    assert!(drivers.contains(&("m2", "melsec-mc")));
+    assert!(drivers.contains(&("x1", "xgt-fenet")));
+    assert!(drivers.contains(&("f1", "fins-tcp")));
+    assert!(drivers.contains(&("s1", "s7-tcp")));
+    assert_eq!(report.ignored_items.len(), 1);
+    assert!(
+        report
+            .modified_items
+            .iter()
+            .any(|m| m.detail.contains("melsec-mc"))
+    );
+    // 가져온 프로젝트가 그대로 검증·실행 명세로 변환된다.
+    let project = nuriscada_project::Project::from_spec(report.project).unwrap();
+    assert_eq!(project.devices.len(), 5);
 }
