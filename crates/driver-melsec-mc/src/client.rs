@@ -113,7 +113,7 @@ impl MelsecMcClient {
         decode_write_response(&frame)
     }
 
-    /// 단일 워드(D) 또는 비트(M)를 쓴다. `unit`은 무시한다(MC 프레임에 국번이 없다).
+    /// 단일 워드(D·W·R) 또는 비트(M·X·Y)를 쓴다. `unit`은 무시한다(MC 프레임에 국번이 없다).
     /// 불명확한 결과를 자동 재시도하지 않는다.
     pub async fn write_single(
         &mut self,
@@ -123,19 +123,19 @@ impl MelsecMcClient {
         value: u16,
     ) -> Result<(), DriverError> {
         let req = match space {
-            SPACE_D => WriteRequest::Words {
-                code: 0xA8,
+            SPACE_D | SPACE_W | SPACE_R => WriteRequest::Words {
+                code: code_for(space).expect("읽기 영역 번호").0,
                 head: u32::from(address),
                 values: vec![value],
             },
-            SPACE_M => WriteRequest::Bits {
-                code: 0x90,
+            SPACE_M | SPACE_X | SPACE_Y => WriteRequest::Bits {
+                code: code_for(space).expect("읽기 영역 번호").0,
                 head: u32::from(address),
                 values: vec![value != 0],
             },
             _ => {
                 return Err(DriverError::InvalidRequest(format!(
-                    "쓰기는 D·M 영역만 지원한다: {space}"
+                    "쓰기는 D·W·R·M·X·Y 영역만 지원한다: {space}"
                 )));
             }
         };

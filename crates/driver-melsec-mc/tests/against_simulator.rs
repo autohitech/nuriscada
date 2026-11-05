@@ -224,12 +224,13 @@ async fn 단일_d와_m_쓰기_후_읽힌다() {
 #[tokio::test]
 async fn 지원하지_않는_영역_쓰기는_거부한다() {
     let (_sim, mut client) = setup().await;
+    // 존재하지 않는 영역 번호는 거부한다.
     assert!(matches!(
-        client.write_single(0, SPACE_W, 0, 1).await,
+        client.write_single(0, 999, 0, 1).await,
         Err(DriverError::InvalidRequest(_))
     ));
     assert!(matches!(
-        client.write_single(0, 999, 0, 1).await,
+        client.write_single(0, 3, 0, 1).await,
         Err(DriverError::InvalidRequest(_))
     ));
 }
@@ -241,4 +242,43 @@ async fn 범위를_벗어난_쓰기는_장치_오류다() {
         client.write_single(0, SPACE_D, 200, 1).await,
         Err(DriverError::Device { .. })
     ));
+}
+
+#[tokio::test]
+async fn wrxy_쓰기_후_읽힌다() {
+    use nuriscada_driver_melsec_mc::{SPACE_R, SPACE_W, SPACE_X, SPACE_Y};
+    let (sim, mut client) = setup().await;
+    client.write_single(0, SPACE_W, 0, 11).await.unwrap();
+    client.write_single(0, SPACE_R, 1, 22).await.unwrap();
+    client.write_single(0, SPACE_X, 0, 1).await.unwrap();
+    client.write_single(0, SPACE_Y, 1, 1).await.unwrap();
+    assert_eq!(
+        client
+            .read(&block(SPACE_W, 0, 2, DataKind::Word))
+            .await
+            .unwrap(),
+        BlockData::Words(vec![11, 0])
+    );
+    assert_eq!(
+        client
+            .read(&block(SPACE_R, 1, 1, DataKind::Word))
+            .await
+            .unwrap(),
+        BlockData::Words(vec![22])
+    );
+    assert_eq!(
+        client
+            .read(&block(SPACE_X, 0, 1, DataKind::Bit))
+            .await
+            .unwrap(),
+        BlockData::Bits(vec![true])
+    );
+    assert_eq!(
+        client
+            .read(&block(SPACE_Y, 1, 1, DataKind::Bit))
+            .await
+            .unwrap(),
+        BlockData::Bits(vec![true])
+    );
+    assert!(sim.state().w[0] == 11 && sim.state().r[1] == 22);
 }
