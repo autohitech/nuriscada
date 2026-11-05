@@ -102,6 +102,7 @@
       address: 0,
       type: "analog",
       unit_text: "",
+      value: null,
       scale: { plc_base: 0, plc_full: 100, base: 0, full: 100, profile: 0, delay: 0, range: 0 },
       alarm: null,
     };
@@ -118,11 +119,18 @@
       if (tag.space === "coil" || tag.space === "discrete" || tag.space === "m" || tag.space === "x" || tag.space === "y" || tag.space === "mx" || tag.space === "cio" || tag.space === "s7m") tag.space = "holding";
       if (!tag.scale) tag.scale = { plc_base: 0, plc_full: 100, base: 0, full: 100, profile: 0, delay: 0, range: 0 };
       tag.alarm = null;
-    } else {
+      tag.value = null;
+    } else if (tag.type === "digital") {
       if (tag.space === "holding" || tag.space === "input" || tag.space === "d" || tag.space === "w" || tag.space === "r" || tag.space === "mw" || tag.space === "dm" || tag.space === "s7db") tag.space = "coil";
       tag.scale = null;
       tag.unit_text = "";
       tag.alarm = null;
+      tag.value = null;
+    } else {
+      tag.scale = null;
+      tag.alarm = null;
+      tag.writable = false;
+      if (tag.value === null) tag.value = "";
     }
   }
 
@@ -276,9 +284,10 @@
                   <label>{m.kind} <select bind:value={tag.type} onchange={() => onTagTypeChange(tag)}>
                     <option value="analog">analog</option>
                     <option value="digital">digital</option>
+                    <option value="string">string</option>
                   </select></label>
                   <label>{m.space} <select bind:value={tag.space}>
-                    {#if tag.type === "analog"}
+                    {#if tag.type === "analog" || tag.type === "string"}
                       <option value="holding">holding</option>
                       <option value="input">input</option>
                       <option value="d">d</option>
@@ -287,7 +296,7 @@
                       <option value="mw">mw</option>
                       <option value="dm">dm</option>
                       <option value="s7db">s7db</option>
-                    {:else}
+                    {:else if tag.type === "digital"}
                       <option value="coil">coil</option>
                       <option value="discrete">discrete</option>
                       <option value="m">m</option>
@@ -299,11 +308,18 @@
                     {/if}
                   </select></label>
                   <label>{m.address} <input type="number" min="0" max="65535" bind:value={tag.address} required /></label>
-                  <label class="checkbox-label"><input type="checkbox" bind:checked={tag.writable} /> {m.allowWrite}</label>
-                  {#if tag.type === "analog"}
+                  {#if tag.type !== "string"}
+                    <label class="checkbox-label"><input type="checkbox" bind:checked={tag.writable} /> {m.allowWrite}</label>
+                  {/if}
+                  {#if tag.type === "analog" || tag.type === "string"}
                     <label>{m.unitText} <input bind:value={tag.unit_text} placeholder="%" /></label>
                   {/if}
-                  <label class="checkbox-label"><input type="checkbox" checked={tag.alarm !== null} onchange={(e) => toggleTagAlarm(tag, (e.currentTarget as HTMLInputElement).checked)} /> {m.useAlarm}</label>
+                  {#if tag.type === "string"}
+                    <label>{m.tagString} <input bind:value={tag.value} /></label>
+                  {/if}
+                  {#if tag.type !== "string"}
+                    <label class="checkbox-label"><input type="checkbox" checked={tag.alarm !== null} onchange={(e) => toggleTagAlarm(tag, (e.currentTarget as HTMLInputElement).checked)} /> {m.useAlarm}</label>
+                  {/if}
                   <button type="button" disabled={busy} onclick={() => removeTag(ti)}>{m.removeTag}</button>
                 </div>
                 {#if tag.type === "analog" && tag.scale}

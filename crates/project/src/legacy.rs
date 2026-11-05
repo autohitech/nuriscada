@@ -278,6 +278,85 @@ pub struct ImportReport {
 ///   `AI,<이름>,<장치>,<영역 또는 MODBUS 5자리 주소>,<주소>[,<단위>,<plc_base>,<plc_full>,<base>,<full>,<알람종류>,<hihi>,<high>,<low>,<lolo>,<gap>,<쓰기허용>]`
 /// - 디지털 태그(`DI` / `DO` / `DIGITAL`):
 ///   `DI,<이름>,<장치>,<영역 또는 MODBUS 5자리 주소>,<주소>[,<알람종류>,<쓰기허용>]`
+/// - 문자열 태그(`ST` / `STRING`, 표시 전용·스캔 없음):
+///   `ST,<이름>,<장치>,<영역>,<주소>,<문자열값>[,<단위>]`
+#[allow(clippy::too_many_arguments)]
+fn resolve_import_device(
+    project: &mut ProjectSpec,
+    dev_field: &str,
+    default_device: Option<&str>,
+    line_no: usize,
+    tag_name: &str,
+    imported_devices: &mut usize,
+    modified_items: &mut Vec<ImportNotice>,
+) -> String {
+    if !dev_field.is_empty() {
+        if !project
+            .devices
+            .iter()
+            .any(|d| d.name.eq_ignore_ascii_case(dev_field))
+        {
+            project.devices.push(DeviceSpec {
+                name: dev_field.to_string(),
+                driver: "modbus-tcp".to_string(),
+                address: "127.0.0.1:5020".to_string(),
+                timeout_ms: 500,
+                scan_ms: 100,
+            });
+            *imported_devices += 1;
+            modified_items.push(ImportNotice {
+                line: line_no,
+                item: tag_name.to_string(),
+                detail: format!(
+                    "참조된 장치 '{dev_field}'가 없어 기본 주소(127.0.0.1:5020)로 자동 생성했습니다."
+                ),
+            });
+            dev_field.to_string()
+        } else {
+            project
+                .devices
+                .iter()
+                .find(|d| d.name.eq_ignore_ascii_case(dev_field))
+                .map(|d| d.name.clone())
+                .unwrap_or_else(|| dev_field.to_string())
+        }
+    } else if let Some(def) = default_device.filter(|s| !s.trim().is_empty()) {
+        let def = def.trim();
+        if !project.devices.iter().any(|d| d.name == def) {
+            project.devices.push(DeviceSpec {
+                name: def.to_string(),
+                driver: "modbus-tcp".to_string(),
+                address: "127.0.0.1:5020".to_string(),
+                timeout_ms: 500,
+                scan_ms: 100,
+            });
+            *imported_devices += 1;
+        }
+        def.to_string()
+    } else if let Some(first) = project.devices.first() {
+        first.name.clone()
+    } else {
+        project.devices.push(DeviceSpec {
+            name: "sim".to_string(),
+            driver: "modbus-tcp".to_string(),
+            address: "127.0.0.1:5020".to_string(),
+            timeout_ms: 500,
+            scan_ms: 100,
+        });
+        *imported_devices += 1;
+        modified_items.push(ImportNotice {
+            line: line_no,
+            item: tag_name.to_string(),
+            detail:
+                "장치가 지정되지 않아 기본 장치 'sim'(127.0.0.1:5020)을 자동 생성해 연결했습니다."
+                    .to_string(),
+        });
+        "sim".to_string()
+    }
+}
+
+/// 쉼표 텍스트로 쓴 가져오기 파일을 읽어 기존 프로젝트 명세에 병합하거나 새로 변환한다(SQ-M02, SQ-M03).
+/// 줄 형식은 NuriScada가 정한 것이며 기존 제품의 실제 파일 배치와 다를 수 있다.
 pub fn import_legacy_text(
     base: Option<&ProjectSpec>,
     text: &str,
@@ -527,70 +606,15 @@ pub fn import_legacy_text(
                         ),
                     });
                 }
-
-                let dev_field = fields[2].trim();
-                let device_name = if !dev_field.is_empty() {
-                    if !project
-                        .devices
-                        .iter()
-                        .any(|d| d.name.eq_ignore_ascii_case(dev_field))
-                    {
-                        project.devices.push(DeviceSpec {
-                            name: dev_field.to_string(),
-                            driver: "modbus-tcp".to_string(),
-                            address: "127.0.0.1:5020".to_string(),
-                            timeout_ms: 500,
-                            scan_ms: 100,
-                        });
-                        imported_devices += 1;
-                        modified_items.push(ImportNotice {
-                            line: line_no,
-                            item: resolved_name.clone(),
-                            detail: format!(
-                                "참조된 장치 '{dev_field}'가 없어 기본 주소(127.0.0.1:5020)로 자동 생성했습니다."
-                            ),
-                        });
-                        dev_field.to_string()
-                    } else {
-                        project
-                            .devices
-                            .iter()
-                            .find(|d| d.name.eq_ignore_ascii_case(dev_field))
-                            .map(|d| d.name.clone())
-                            .unwrap_or_else(|| dev_field.to_string())
-                    }
-                } else if let Some(def) = default_device.filter(|s| !s.trim().is_empty()) {
-                    let def = def.trim();
-                    if !project.devices.iter().any(|d| d.name == def) {
-                        project.devices.push(DeviceSpec {
-                            name: def.to_string(),
-                            driver: "modbus-tcp".to_string(),
-                            address: "127.0.0.1:5020".to_string(),
-                            timeout_ms: 500,
-                            scan_ms: 100,
-                        });
-                        imported_devices += 1;
-                    }
-                    def.to_string()
-                } else if let Some(first) = project.devices.first() {
-                    first.name.clone()
-                } else {
-                    project.devices.push(DeviceSpec {
-                        name: "sim".to_string(),
-                        driver: "modbus-tcp".to_string(),
-                        address: "127.0.0.1:5020".to_string(),
-                        timeout_ms: 500,
-                        scan_ms: 100,
-                    });
-                    imported_devices += 1;
-                    modified_items.push(ImportNotice {
-                        line: line_no,
-                        item: resolved_name.clone(),
-                        detail: "장치가 지정되지 않아 기본 장치 'sim'(127.0.0.1:5020)을 자동 생성해 연결했습니다.".to_string(),
-                    });
-                    "sim".to_string()
-                };
-
+                let device_name = resolve_import_device(
+                    &mut project,
+                    fields[2].trim(),
+                    default_device,
+                    line_no,
+                    &resolved_name,
+                    &mut imported_devices,
+                    &mut modified_items,
+                );
                 // 영역 + 주소 파싱: (1) fields[3]이 영역 문자열이고 fields[4]가 주소이거나,
                 // (2) fields[3]이 5자리 MODBUS 주소(40001, 30001, 10001, 00001)인 경우 지원
                 let (mut space, address, rest_start) = match parse_space_and_address(
@@ -696,6 +720,7 @@ pub fn import_legacy_text(
                         }),
                         alarm,
                         unit_text,
+                        value: None,
                     });
                 } else {
                     let alarm = if let Some(dk) = parse_opt_u8(&fields, rest_start) {
@@ -735,8 +760,95 @@ pub fn import_legacy_text(
                         scale: None,
                         alarm,
                         unit_text: String::new(),
+                        value: None,
                     });
                 }
+                imported_tags += 1;
+            }
+            "ST" | "STRING" => {
+                // ST,<이름>,<장치>,<영역>,<주소>,<문자열값>[,<단위>]
+                if fields.len() < 6 {
+                    unreadable_items.push(ImportNotice {
+                        line: line_no,
+                        item: kind_raw.to_string(),
+                        detail: "문자열 태그 줄은 최소 6개 필드(종류,이름,장치,영역,주소,문자열값)가 필요합니다."
+                            .to_string(),
+                    });
+                    continue;
+                }
+                let raw_name = fields[1].trim();
+                if raw_name.is_empty() {
+                    unreadable_items.push(ImportNotice {
+                        line: line_no,
+                        item: kind_raw.to_string(),
+                        detail: "태그 이름이 비어 있습니다.".to_string(),
+                    });
+                    continue;
+                }
+                let existing_names: Vec<String> =
+                    project.tags.iter().map(|t| t.name.clone()).collect();
+                let resolved_name = resolve_tag_name(&existing_names, raw_name);
+                if resolved_name != raw_name {
+                    renamed_tags.push(ImportRenameItem {
+                        line: line_no,
+                        original: raw_name.to_string(),
+                        resolved: resolved_name.clone(),
+                    });
+                    modified_items.push(ImportNotice {
+                        line: line_no,
+                        item: raw_name.to_string(),
+                        detail: format!(
+                            "태그 이름 충돌로 '{raw_name}'을 '{resolved_name}'(으)로 변경했습니다."
+                        ),
+                    });
+                }
+                let device_name = resolve_import_device(
+                    &mut project,
+                    fields[2].trim(),
+                    default_device,
+                    line_no,
+                    &resolved_name,
+                    &mut imported_devices,
+                    &mut modified_items,
+                );
+                let space = fields[3].trim().to_string();
+                if space.is_empty() {
+                    unreadable_items.push(ImportNotice {
+                        line: line_no,
+                        item: resolved_name,
+                        detail: "문자열 태그의 영역이 비어 있습니다.".to_string(),
+                    });
+                    continue;
+                }
+                let addr_str = fields[4].trim();
+                let address = match addr_str.parse::<u16>() {
+                    Ok(a) => a,
+                    Err(_) => {
+                        unreadable_items.push(ImportNotice {
+                            line: line_no,
+                            item: resolved_name,
+                            detail: format!(
+                                "태그 주소 '{addr_str}'가 올바른 0~65535 정수가 아닙니다."
+                            ),
+                        });
+                        continue;
+                    }
+                };
+                let text_value = fields[5].clone();
+                let unit_text = fields.get(6).cloned().unwrap_or_default();
+                project.tags.push(TagSpec {
+                    writable: false,
+                    name: resolved_name,
+                    device: device_name,
+                    unit: 1,
+                    space,
+                    address,
+                    kind: "string".to_string(),
+                    scale: None,
+                    alarm: None,
+                    unit_text,
+                    value: Some(text_value),
+                });
                 imported_tags += 1;
             }
             _ => {

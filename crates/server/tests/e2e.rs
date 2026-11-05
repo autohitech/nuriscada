@@ -618,3 +618,63 @@ async fn 통신_두절과_복귀가_품질에_드러난다() {
     assert_eq!(status["devices"][0]["connected"], true);
     st.scanners.take().unwrap().stop().await;
 }
+
+#[tokio::test]
+async fn 문자열_태그는_표시되고_이력에_쌓이지_않는다() {
+    let mut st = start().await;
+    // 시작 프로젝트에 문자열 태그가 없으므로 프로젝트 편집으로 추가한다.
+    // (서버 재시작 없이 Hub::reconfigure 경로를 함께 확인한다.)
+    let project = {
+        let base = Project::from_toml(&format!(
+            r#"
+[[device]]
+name = "sim"
+driver = "modbus-tcp"
+address = "{}"
+timeout_ms = 300
+scan_ms = 20
+
+[[tag]]
+name = "LINE"
+device = "sim"
+space = "holding"
+address = 0
+type = "string"
+unit_text = "호"
+value = "1호기 라인"
+"#,
+            st.sim.addr()
+        ))
+        .unwrap();
+        Arc::new(base)
+    };
+    let hub = Hub::new(&project);
+    let scanners = start_scanners(&project, &hub);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router(hub, addr);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    wait_for(|| async {
+        let doc = json(addr, "/api/v1/tags").await;
+        doc["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["name"] == "LINE" && t["value"] == "1호기 라인")
+    })
+    .await;
+    let doc = json(addr, "/api/v1/tags").await;
+    let line = doc["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "LINE")
+        .unwrap();
+    assert_eq!(line["kind"], "string");
+    assert_eq!(line["quality"], "good");
+    scanners.stop().await;
+    st.scanners.take().unwrap().stop().await;
+}

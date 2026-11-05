@@ -17,10 +17,11 @@ pub fn encode_batch(batch: &Batch) -> String {
     let items: Vec<Value> = batch
         .items
         .iter()
-        .map(|&(index, value, quality, state)| {
+        .map(|&(index, ref value, quality, state)| {
             let v = match value {
                 Some(TagValue::Number(n)) => json!(n),
                 Some(TagValue::Bool(b)) => json!(b),
+                Some(TagValue::Text(s)) => json!(s),
                 None => Value::Null,
             };
             json!([index, v, u8::from(quality == Quality::Good), state])

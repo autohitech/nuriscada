@@ -84,13 +84,13 @@ SCAN,legacy_melsec,MELSEC,192.168.0.10:5000,100,500,
 AI,TANK_LEVEL,plc1,40001,"%",0,1000,0,100,6,90,80,20,10,2,True,
 AI,TANK_LEVEL,plc1,holding,1,"°C",0,500,0,50,
 DO,PUMP_CMD,plc1,coil,0,0,
-ST,IGNORED_STRING_TAG,plc1,0,
+ST,LINE_NAME,plc1,holding,10,1호기 라인,호
 AI,BAD_LINE,plc1,invalid_space,
 "#;
 
     let report = import_legacy_text(None, input, None).unwrap();
     assert_eq!(report.imported_devices, 2);
-    assert_eq!(report.imported_tags, 3);
+    assert_eq!(report.imported_tags, 4);
     assert_eq!(report.renamed_tags.len(), 1);
     assert_eq!(report.renamed_tags[0].original, "TANK_LEVEL");
     assert_eq!(report.renamed_tags[0].resolved, "TANK_LEVEL1");
@@ -111,11 +111,16 @@ AI,BAD_LINE,plc1,invalid_space,
     let t2 = &report.project.tags[2];
     assert_eq!(t2.name, "PUMP_CMD");
     assert_eq!(t2.kind, "digital");
-    assert!(t2.writable);
+    // ST 문자열 태그는 표시 전용으로 가져온다
+    let t3 = &report.project.tags[3];
+    assert_eq!(t3.name, "LINE_NAME");
+    assert_eq!(t3.kind, "string");
+    assert!(!t3.writable);
+    assert_eq!(t3.value.as_deref(), Some("1호기 라인"));
 
     // SQ-M02 보고서 항목 검증: 바뀐 항목, 무시한 항목, 읽지 못한 항목이 모두 기록되어야 함
     assert!(!report.modified_items.is_empty());
-    assert!(report.ignored_items.len() >= 2); // 헤더 + ST (MELSEC은 이제 가져온다)
+    assert!(!report.ignored_items.is_empty()); // 헤더 (ST는 문자열 태그로 가져온다)
     assert_eq!(report.unreadable_items.len(), 1);
 }
 

@@ -362,3 +362,41 @@ fn s7_장치와_영역을_받아들이고_쓰기를_거부한다() {
     let mixed = S7.replace("space = \"s7db\"", "space = \"holding\"");
     assert!(err(&mixed).contains("쓸 수 없다"));
 }
+
+#[test]
+fn 문자열_태그를_받아들이고_왕복한다() {
+    let text = r#"
+[[device]]
+name = "sim"
+driver = "modbus-tcp"
+address = "127.0.0.1:5020"
+
+[[tag]]
+name = "LINE_NAME"
+device = "sim"
+space = "holding"
+address = 10
+type = "string"
+unit_text = "호"
+value = "1호기 라인"
+"#;
+    let p = Project::from_toml(text).unwrap();
+    assert_eq!(p.tags.len(), 1);
+    assert!(matches!(
+        &p.tags[0].body,
+        nuriscada_project::TagBody::String { unit_text, initial }
+        if unit_text == "호" && initial == "1호기 라인"
+    ));
+    let reparsed = Project::from_toml(&p.to_toml()).unwrap();
+    assert_eq!(p, reparsed);
+
+    // scale·alarm·writable은 거부한다.
+    for extra in [
+        "writable = true\n",
+        "scale = { plc_base = 0, plc_full = 100, base = 0, full = 100 }\n",
+        "alarm = { kind = 0 }\n",
+    ] {
+        let bad = text.replace("value = ", &format!("{extra}value = "));
+        assert!(err(&bad).contains("문자열 태그"), "{extra}");
+    }
+}

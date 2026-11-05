@@ -262,6 +262,13 @@ pub enum TagBody {
         /// 알람 종류(없을 수 있음).
         alarm_kind: Option<u8>,
     },
+    /// 문자열 표시(스캔하지 않는다. 값 이력에 저장하지 않는다).
+    String {
+        /// 단위 표시 문자열.
+        unit_text: String,
+        /// 표시할 초기 문자열.
+        initial: String,
+    },
 }
 
 /// 태그.
@@ -385,11 +392,11 @@ pub struct TagSpec {
     /// 유닛 번호.
     #[serde(default = "default_unit")]
     pub unit: u8,
-    /// 메모리 영역(`coil`, `discrete`, `holding`, `input`).
+    /// 메모리 영역(`coil`, `discrete`, `holding`, `input`, ...).
     pub space: String,
     /// 주소.
     pub address: u16,
-    /// 종류(`analog`, `digital`).
+    /// 종류(`analog`, `digital`, `string`).
     #[serde(rename = "type")]
     pub kind: String,
     /// 환산 설정(아날로그 전용).
@@ -399,6 +406,9 @@ pub struct TagSpec {
     /// 단위 문자열.
     #[serde(default)]
     pub unit_text: String,
+    /// 문자열 태그의 표시 문자열(`string` 전용).
+    #[serde(default)]
+    pub value: Option<String>,
 }
 
 fn default_unit() -> u8 {
@@ -789,9 +799,24 @@ impl Project {
                     };
                     TagBody::Digital { alarm_kind }
                 }
+                "string" => {
+                    if t.writable {
+                        return invalid(format!("태그 `{}`: 문자열 태그는 쓸 수 없다", t.name));
+                    }
+                    if t.scale.is_some() {
+                        return invalid(format!("태그 `{}`: 문자열 태그에는 scale이 없다", t.name));
+                    }
+                    if t.alarm.is_some() {
+                        return invalid(format!("태그 `{}`: 문자열 태그에는 alarm이 없다", t.name));
+                    }
+                    TagBody::String {
+                        unit_text: t.unit_text,
+                        initial: t.value.unwrap_or_default(),
+                    }
+                }
                 other => {
                     return invalid(format!(
-                        "태그 `{}`: 알 수 없는 type `{other}` (analog, digital)",
+                        "태그 `{}`: 알 수 없는 type `{other}` (analog, digital, string)",
                         t.name
                     ));
                 }
@@ -914,7 +939,7 @@ impl Project {
                 .tags
                 .iter()
                 .map(|t| {
-                    let (kind, scale, alarm, unit_text) = match &t.body {
+                    let (kind, scale, alarm, unit_text, value) = match &t.body {
                         TagBody::Analog {
                             scale,
                             alarm,
@@ -939,6 +964,7 @@ impl Project {
                                 gap: a.limits.gap,
                             }),
                             unit_text.clone(),
+                            None,
                         ),
                         TagBody::Digital { alarm_kind } => (
                             "digital".to_string(),
@@ -952,6 +978,14 @@ impl Project {
                                 gap: 0.0,
                             }),
                             String::new(),
+                            None,
+                        ),
+                        TagBody::String { unit_text, initial } => (
+                            "string".to_string(),
+                            None,
+                            None,
+                            unit_text.clone(),
+                            Some(initial.clone()),
                         ),
                     };
                     TagSpec {
@@ -965,6 +999,7 @@ impl Project {
                         scale,
                         alarm,
                         unit_text,
+                        value,
                     }
                 })
                 .collect(),
@@ -1002,6 +1037,9 @@ impl Project {
             out.push_str(&format!("type = {}\n", toml_str(&t.kind)));
             if !t.unit_text.is_empty() {
                 out.push_str(&format!("unit_text = {}\n", toml_str(&t.unit_text)));
+            }
+            if let Some(v) = &t.value {
+                out.push_str(&format!("value = {}\n", toml_str(v)));
             }
             if let Some(s) = &t.scale {
                 let mut fields = vec![

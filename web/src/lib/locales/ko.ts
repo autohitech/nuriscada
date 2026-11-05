@@ -147,6 +147,7 @@ export const ko = {
   address: "주소",
   allowWrite: "쓰기 허용",
   unitText: "단위",
+  tagString: "문자열",
   useAlarm: "알람 사용",
   removeTag: "태그 삭제",
   plcBase: "PLC 하한",

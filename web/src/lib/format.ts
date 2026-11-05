@@ -51,10 +51,11 @@ function numberFormat(): Intl.NumberFormat {
   return f;
 }
 
-/** 값을 화면 문자열로. 숫자는 소수 둘째 자리까지, 불리언은 문구로 바꾼다. */
-export function formatValue(value: number | boolean | null, on = "ON", off = "OFF", none = "—"): string {
+/** 값을 화면 문자열로. 숫자는 소수 둘째 자리까지, 불리언은 문구로, 문자열은 그대로 둔다. */
+export function formatValue(value: number | boolean | string | null, on = "ON", off = "OFF", none = "—"): string {
   if (value === null) return none;
   if (typeof value === "boolean") return value ? on : off;
+  if (typeof value === "string") return value;
   if (Object.is(value, -0)) return numberFormat().format(0);
   return numberFormat().format(value);
 }

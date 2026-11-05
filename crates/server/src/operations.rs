@@ -637,15 +637,20 @@ impl Operations {
         let mut conn = self.db.lock().map_err(|_| "DB 잠금 오류")?;
         let tx = conn.transaction()?;
         for s in samples {
-            let val: Option<f64> = s.value.map(|v| match v {
-                TagValue::Number(n) => n,
+            // 문자열 태그는 값 이력에 저장하지 않는다.
+            if matches!(s.value, Some(TagValue::Text(_))) {
+                continue;
+            }
+            let val: Option<f64> = s.value.as_ref().map(|v| match v {
+                TagValue::Number(n) => *n,
                 TagValue::Bool(b) => {
-                    if b {
+                    if *b {
                         1.0
                     } else {
                         0.0
                     }
                 }
+                TagValue::Text(_) => unreachable!("위에서 걸렀다"),
             });
             let quality = match s.quality {
                 Quality::Good => "good",
@@ -775,6 +780,10 @@ impl Operations {
                 let now = now_ms();
                 let mut samples = Vec::new();
                 for mut t in hub.tags() {
+                    // 문자열 태그는 값 이력에 저장하지 않는다.
+                    if matches!(t.value, Some(TagValue::Text(_))) {
+                        continue;
+                    }
                     if t.changed_ms == 0 && t.value.is_none() {
                         continue;
                     }
@@ -791,8 +800,10 @@ impl Operations {
                         if now.saturating_sub(t.changed_ms) >= 1_000 {
                             t.changed_ms = now;
                         }
-                        last_tag_saved
-                            .insert(t.name.clone(), (now, t.value, t.quality, t.alarm_state));
+                        last_tag_saved.insert(
+                            t.name.clone(),
+                            (now, t.value.clone(), t.quality, t.alarm_state),
+                        );
                         samples.push(t);
                     }
                 }
@@ -825,5 +836,50 @@ impl AlarmArchive {
     pub async fn stop(self) {
         let _ = self.shutdown.send(true);
         let _ = self.task.await;
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+    use nuriscada_scheduler::{Quality, TagSnapshot, TagValue};
+
+    fn snapshot(name: &str, value: Option<TagValue>) -> TagSnapshot {
+        TagSnapshot {
+            name: name.to_string(),
+            device: "sim".to_string(),
+            kind: "analog",
+            value,
+            quality: Quality::Good,
+            changed_ms: 1,
+            unit_text: String::new(),
+            alarm_state: None,
+        }
+    }
+
+    #[test]
+    fn 문자열_표본은_값_이력에_저장하지_않는다() {
+        let ops = Operations::open(
+            Path::new(":memory:"),
+            Arc::new(Project::from_toml("").unwrap()),
+            false,
+        )
+        .unwrap();
+        ops.save_tag_samples(&[
+            snapshot("N", Some(TagValue::Number(1.0))),
+            snapshot("S", Some(TagValue::Text("가나다".to_string()))),
+        ])
+        .unwrap();
+        let rows: Vec<String> = ops
+            .db
+            .lock()
+            .unwrap()
+            .prepare("SELECT tag FROM tag_history ORDER BY tag")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<std::result::Result<Vec<String>, rusqlite::Error>>()
+            .unwrap();
+        assert_eq!(rows, vec!["N".to_string()]);
     }
 }
