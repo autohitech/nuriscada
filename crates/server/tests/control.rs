@@ -1169,12 +1169,12 @@ writable=true
     let cookie = login_at(addr, false, "operator").await;
     // 첫 스캔이 품질을 Good으로 올릴 때까지 기다린다.
     for _ in 0..50 {
-        let (_, _, tags) = request(addr, "GET", "/api/v1/tags", &cookie, json!({}), "")
-            .await;
+        let (_, _, tags) = request(addr, "GET", "/api/v1/tags", &cookie, json!({}), "").await;
         let good = tags["tags"]
             .as_array()
             .map(|ts| {
-                ts.iter().all(|t| t.get("quality").and_then(|q| q.as_str()) == Some("good"))
+                ts.iter()
+                    .all(|t| t.get("quality").and_then(|q| q.as_str()) == Some("good"))
             })
             .unwrap_or(false);
         if good {
@@ -1271,12 +1271,12 @@ writable=true
     let cookie = login_at(addr, false, "operator").await;
     // 첫 스캔이 품질을 Good으로 올릴 때까지 기다린다.
     for _ in 0..50 {
-        let (_, _, tags) = request(addr, "GET", "/api/v1/tags", &cookie, json!({}), "")
-            .await;
+        let (_, _, tags) = request(addr, "GET", "/api/v1/tags", &cookie, json!({}), "").await;
         let good = tags["tags"]
             .as_array()
             .map(|ts| {
-                ts.iter().all(|t| t.get("quality").and_then(|q| q.as_str()) == Some("good"))
+                ts.iter()
+                    .all(|t| t.get("quality").and_then(|q| q.as_str()) == Some("good"))
             })
             .unwrap_or(false);
         if good {
