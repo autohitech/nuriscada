@@ -29,6 +29,69 @@
   let snapGrid = $state(true);
   let busy = $state(false);
   let statusMsg = $state("");
+  // 실행 취소·다시 실행 스택: 화면 배열 전체의 스냅샷을 최대 50개까지 둔다.
+  let undoStack = $state<ScreenSpec[][]>([]);
+  let redoStack = $state<ScreenSpec[][]>([]);
+  let staged: ScreenSpec[] | null = null;
+
+  function snapshotScreens(): ScreenSpec[] {
+    return $state.snapshot(screens);
+  }
+
+  function clearHistory(): void {
+    undoStack = [];
+    redoStack = [];
+    staged = null;
+  }
+
+  /** 변경 직전 상태를 스택에 쌓는다. 같은 편집 제스처에서는 한 번만 쌓이도록 호출 측에서 조절한다. */
+  function commit(): void {
+    undoStack.push(snapshotScreens());
+    if (undoStack.length > 50) undoStack.shift();
+    redoStack = [];
+    staged = null;
+  }
+
+  /** 입력 칸에 들어갈 때 변경 전 상태를 잡아 둔다. */
+  function stageEdit(): void {
+    staged = snapshotScreens();
+  }
+
+  /** 입력 칸의 값이 확정되면 잡아 둔 상태를 스택에 쌓는다. */
+  function commitStaged(): void {
+    if (!staged) return;
+    undoStack.push(staged);
+    if (undoStack.length > 50) undoStack.shift();
+    redoStack = [];
+    staged = null;
+  }
+
+  function restore(list: ScreenSpec[]): void {
+    // $state 프록시는 structuredClone이 실패할 수 있어 스냅샷으로 풀어 쓴다.
+    screens = $state.snapshot(list) as ScreenSpec[];
+    if (activeIndex >= screens.length) activeIndex = Math.max(0, screens.length - 1);
+    const ids = new Set(screens[activeIndex]?.widget.map((w) => w.id) ?? []);
+    if (!selectedWidgetId || !ids.has(selectedWidgetId)) {
+      selectedWidgetId = screens[activeIndex]?.widget[0]?.id ?? null;
+    }
+    staged = null;
+  }
+
+  function undo(): void {
+    if (!editing || undoStack.length === 0) return;
+    const prev = undoStack.pop();
+    if (!prev) return;
+    redoStack.push(snapshotScreens());
+    restore(prev);
+  }
+
+  function redo(): void {
+    if (!editing || redoStack.length === 0) return;
+    const next = redoStack.pop();
+    if (!next) return;
+    undoStack.push(snapshotScreens());
+    restore(next);
+  }
   let dragState = $state<{
     widgetId: string;
     startClientX: number;
@@ -103,6 +166,7 @@
       if (Array.isArray(data.screens)) {
         screens = data.screens;
         if (activeIndex >= screens.length) activeIndex = 0;
+        clearHistory();
       }
     } catch {
       // 오프라인 또는 재연결 중이면 이전 화면을 유지한다.
@@ -111,11 +175,27 @@
 
   onMount(() => {
     void loadScreens();
+    const onKey = (event: KeyboardEvent) => {
+      if (!editing || !(event.ctrlKey || event.metaKey)) return;
+      const target = event.target as HTMLElement | null;
+      // 입력 칸에서는 브라우저의 자체 실행 취소를 쓴다.
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT")) return;
+      const key = event.key.toLowerCase();
+      if (key === "z" && !event.shiftKey) {
+        event.preventDefault();
+        undo();
+      } else if ((key === "y") || (key === "z" && event.shiftKey)) {
+        event.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   });
 
   function ensureEditableScreens() {
     if (screens.length === 0) {
-      screens = [structuredClone(buildAutoScreen(store.tags))];
+      screens = [buildAutoScreen(store.tags)];
       activeIndex = 0;
     }
   }
@@ -123,6 +203,7 @@
   function toggleEdit() {
     if (!editing) {
       ensureEditableScreens();
+      clearHistory();
       selectedWidgetId = screens[activeIndex]?.widget[0]?.id ?? null;
       editing = true;
       statusMsg = "";
@@ -135,6 +216,7 @@
   function addScreen() {
     ensureEditableScreens();
     const nextNum = screens.length + 1;
+    commit();
     screens.push({
       name: m.newScreenName(nextNum),
       width: 800,
@@ -147,6 +229,7 @@
 
   function removeCurrentScreen() {
     if (screens.length <= 1) return;
+    commit();
     screens = screens.filter((_, i) => i !== activeIndex);
     activeIndex = Math.max(0, activeIndex - 1);
     selectedWidgetId = null;
@@ -187,6 +270,7 @@
       min: 0,
       max: 100,
     };
+    commit();
     scr.widget.push(nw);
     selectedWidgetId = nw.id;
   }
@@ -196,6 +280,7 @@
     const scr = screens[activeIndex];
     if (!scr) return;
     const generated = buildAutoScreen(store.tags);
+    commit();
     scr.widget = generated.widget;
     scr.height = generated.height;
     selectedWidgetId = scr.widget[0]?.id ?? null;
@@ -204,6 +289,7 @@
   function removeSelectedWidget() {
     const scr = screens[activeIndex];
     if (!scr || !selectedWidgetId) return;
+    commit();
     scr.widget = scr.widget.filter((w) => w.id !== selectedWidgetId);
     selectedWidgetId = scr.widget[0]?.id ?? null;
   }
@@ -264,6 +350,7 @@
   function onWidgetPointerDown(event: PointerEvent, w: GraphicWidgetSpec) {
     selectedWidgetId = w.id;
     if (!editing) return;
+    commit();
     event.stopPropagation();
     (event.currentTarget as Element).setPointerCapture?.(event.pointerId);
     dragState = {
@@ -348,6 +435,8 @@
           {editing ? m.closeEdit : m.editScreen}
         </button>
         {#if editing}
+          <button type="button" disabled={undoStack.length === 0} onclick={undo} title="Ctrl+Z">{m.undoEdit}</button>
+          <button type="button" disabled={redoStack.length === 0} onclick={redo} title="Ctrl+Shift+Z">{m.redoEdit}</button>
           <button type="button" onclick={addScreen}>{m.addScreenBtn}</button>
           <button type="button" disabled={screens.length <= 1} onclick={removeCurrentScreen}>
             {m.deleteScreen}
@@ -608,7 +697,7 @@
     </div>
 
     {#if editing && editScreen}
-      <aside class="graphic-inspector" aria-label={m.inspectorAria}>
+      <aside class="graphic-inspector" aria-label={m.inspectorAria} onfocuscapture={stageEdit} onchange={commitStaged}>
         <h4>{m.screenProps}</h4>
         <label>
           {m.screenName}

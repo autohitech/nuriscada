@@ -232,6 +232,8 @@ export const en: Messages = {
   editScreen: "Edit screen",
   addScreenBtn: "+ Screen",
   deleteScreen: "Delete screen",
+  undoEdit: "Undo",
+  redoEdit: "Redo",
   autoLayout: "Auto-layout from tags",
   snap10: "Snap to 10 px",
   saveScreen: "Save screen",
