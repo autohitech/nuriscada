@@ -18,6 +18,7 @@ use nuriscada_driver_api::DataKind;
 use nuriscada_driver_fins_tcp::FinsTcpClient;
 use nuriscada_driver_melsec_mc::MelsecMcClient;
 use nuriscada_driver_modbus_tcp::ModbusTcpClient;
+use nuriscada_driver_s7::S7Client;
 use nuriscada_driver_xgt_fenet::XgtFenetClient;
 use nuriscada_project::{DriverConfig, Space};
 use nuriscada_scheduler::{Quality, now_ms};
@@ -641,13 +642,15 @@ pub(super) async fn write_tag(
         | Space::MelsecX
         | Space::MelsecY
         | Space::XgtMx
-        | Space::FinsCio => input.value.as_bool().map(u16::from),
+        | Space::FinsCio
+        | Space::S7M => input.value.as_bool().map(u16::from),
         Space::Holding
         | Space::MelsecD
         | Space::MelsecW
         | Space::MelsecR
         | Space::XgtMw
-        | Space::FinsDm => input.value.as_u64().and_then(|v| u16::try_from(v).ok()),
+        | Space::FinsDm
+        | Space::S7Db => input.value.as_u64().and_then(|v| u16::try_from(v).ok()),
         _ => None,
     }
     .ok_or_else(|| error(StatusCode::BAD_REQUEST, Code::WriteBadValue))?;
@@ -694,9 +697,11 @@ pub(super) async fn write_tag(
                 .write_single(tag.unit, tag.space.code(), tag.address, raw)
                 .await
         }
-        DriverConfig::S7Tcp { .. } => {
-            // 검증에서 S7 태그의 쓰기를 이미 거부하므로 여기에는 닿지 않는다.
-            return Err(error(StatusCode::NOT_FOUND, Code::WriteTagNotWritable));
+        DriverConfig::S7Tcp { address } => {
+            let mut driver = S7Client::new(address.clone(), device.timeout);
+            driver
+                .write_single(tag.unit, tag.space.code(), tag.address, raw)
+                .await
         }
     };
     let detail = match &outcome {

@@ -3,7 +3,7 @@
 
 //! 시험용 S7 (ISO-on-TCP) 시뮬레이터. 개발·CI 전용이며 배포물에 포함하지 않는다.
 //!
-//! COTP 접속, S7 통신 설정, 읽기 변수(0x04, DB 워드·M 비트)를 지원한다.
+//! COTP 접속, S7 통신 설정, 읽기 변수(0x04, DB 워드·M 비트)와 쓰기 변수(0x05, DB 워드·M 비트)를 지원한다.
 //! 실행 중에 메모리 값을 바꾸거나 응답을 늦추고 끊을 수 있어서
 //! 드라이버와 스케줄러의 시험에 쓴다.
 
@@ -143,6 +143,9 @@ fn respond(pdu: &[u8], state: &mut State) -> Option<Vec<u8>> {
         out.extend_from_slice(&param);
         return Some(wrap(&out));
     }
+    if func == 0x05 {
+        return respond_write(pdu, pdu_ref, state);
+    }
     if func != 0x04 || pdu.len() < 12 + 12 {
         return None;
     }
@@ -155,12 +158,11 @@ fn respond(pdu: &[u8], state: &mut State) -> Option<Vec<u8>> {
     let db = u16::from_be_bytes([pdu[18], pdu[19]]);
     let area = pdu[20];
     let addr = u32::from_be_bytes([0, pdu[21], pdu[22], pdu[23]]);
-    let (is_word, bytes) = match (area, transport) {
+    let (is_word, _bytes) = match (area, transport) {
         (0x84, 0x02) => (true, data_len as usize),
         (0x83, 0x01) => (false, data_len.div_ceil(8) as usize),
         _ => return None,
     };
-    let _ = bytes;
     // 데이터를 읽는다.
     let mut data = Vec::new();
     if is_word {
@@ -215,6 +217,86 @@ fn respond(pdu: &[u8], state: &mut State) -> Option<Vec<u8>> {
     out.extend_from_slice(&[0x00, 0x00]);
     out.extend_from_slice(&data);
     Some(wrap(&out))
+}
+
+/// 쓰기(0x05) PDU를 메모리에 반영한다. DB 워드와 M 비트를 지원한다.
+/// 성공하면 항목 수락(0xFF) 응답을 돌려준다.
+fn respond_write(pdu: &[u8], pdu_ref: u16, state: &mut State) -> Option<Vec<u8>> {
+    // 머리 10 + 항목 지정 12 + 데이터 머리 4.
+    if pdu.len() < 10 + 12 + 4 {
+        return None;
+    }
+    if pdu[11] != 1 || pdu[12] != 0x12 || pdu[13] != 0x0A || pdu[14] != 0x10 {
+        return None;
+    }
+    let transport = pdu[15];
+    let spec_len = u16::from_be_bytes([pdu[16], pdu[17]]);
+    let db = u16::from_be_bytes([pdu[18], pdu[19]]);
+    let area = pdu[20];
+    let addr = u32::from_be_bytes([0, pdu[21], pdu[22], pdu[23]]);
+    let data_off = 10 + 14;
+    if pdu.len() < data_off + 4 {
+        return None;
+    }
+    if pdu[data_off] != 0x00 {
+        return None;
+    }
+    let data_transport = pdu[data_off + 1];
+    let data_len_bits = u16::from_be_bytes([pdu[data_off + 2], pdu[data_off + 3]]);
+    let data = &pdu[data_off + 4..];
+    // 항목 수락 응답을 만든다.
+    let accept = || {
+        let mut out = s7_header(0x03, pdu_ref, 3, 0);
+        out.extend_from_slice(&[0x05, 0x01, 0xFF]);
+        Some(wrap(&out))
+    };
+    match (area, transport, data_transport) {
+        (0x84, 0x02, 0x04) => {
+            // DB 워드: 지정 길이는 바이트, 데이터 길이는 비트.
+            let count = usize::from(spec_len) / 2;
+            if count == 0
+                || count > 32
+                || usize::from(data_len_bits) != count * 16
+                || data.len() < count * 2
+            {
+                return None;
+            }
+            let regs = state.db.entry(db).or_insert_with(|| vec![0; 1024]);
+            let start = addr as usize;
+            if start + count > regs.len() {
+                // 항목 오류 0x05(범위 밖).
+                let mut out = s7_header(0x03, pdu_ref, 3, 0);
+                out.extend_from_slice(&[0x05, 0x01, 0x05]);
+                return Some(wrap(&out));
+            }
+            for (i, pair) in data[..count * 2].as_chunks::<2>().0.iter().enumerate() {
+                regs[start + i] = u16::from_be_bytes([pair[0], pair[1]]);
+            }
+            accept()
+        }
+        (0x83, 0x01, 0x03) => {
+            // M 비트: 지정·데이터 길이 모두 비트.
+            let count = usize::from(spec_len);
+            if count == 0
+                || count > 32
+                || data_len_bits != spec_len
+                || data.len() < count.div_ceil(8)
+            {
+                return None;
+            }
+            let start = addr as usize;
+            if start + count > state.m.len() {
+                let mut out = s7_header(0x03, pdu_ref, 3, 0);
+                out.extend_from_slice(&[0x05, 0x01, 0x05]);
+                return Some(wrap(&out));
+            }
+            for i in 0..count {
+                state.m[start + i] = data[i / 8] & (1 << (i % 8)) != 0;
+            }
+            accept()
+        }
+        _ => None,
+    }
 }
 
 async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> io::Result<()> {

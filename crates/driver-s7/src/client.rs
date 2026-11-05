@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright NuriScada contributors
 
-//! S7 (ISO-on-TCP) 읽기 변수 클라이언트. 연결할 때 COTP 접속과 통신 설정을 수행한다.
+//! S7 (ISO-on-TCP) 읽기·쓰기 변수 클라이언트. 연결할 때 COTP 접속과 통신 설정을 수행한다.
 
 use std::time::{Duration, Instant};
 
@@ -11,8 +11,8 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 use crate::protocol::{
-    ReadRequest, decode_read_response, decode_setup, encode_cotp_connect, encode_read_request,
-    encode_setup, strip_transport,
+    ReadRequest, WriteRequest, decode_read_response, decode_setup, decode_write_response,
+    encode_cotp_connect, encode_read_request, encode_setup, encode_write_request, strip_transport,
 };
 
 /// DB 워드 영역 번호(DB 번호 = 유닛).
@@ -90,6 +90,85 @@ impl S7Client {
             return Err(DriverError::Protocol("PDU 참조가 다르다".into()));
         }
         decode_read_response(req, &frame)
+    }
+
+    async fn exchange_write(
+        stream: &mut TcpStream,
+        request: &[u8],
+        pdu_ref: u16,
+    ) -> Result<(), DriverError> {
+        let frame = Self::transact(stream, request).await?;
+        let pdu = strip_transport(&frame)?;
+        if pdu.len() < 6 || u16::from_le_bytes([pdu[4], pdu[5]]) != pdu_ref {
+            return Err(DriverError::Protocol("PDU 참조가 다르다".into()));
+        }
+        decode_write_response(&frame)
+    }
+
+    /// 단일 값을 쓴다. DB는 워드, M은 비트(값 0/1)이다. DB 번호는 `unit`에서 가져온다.
+    /// 불명확한 결과를 자동 재시도하지 않는다.
+    pub async fn write_single(
+        &mut self,
+        unit: u8,
+        space: u16,
+        address: u16,
+        value: u16,
+    ) -> Result<(), DriverError> {
+        let req = match space {
+            SPACE_S7DB => WriteRequest::DbWords {
+                db: u16::from(unit),
+                start: address,
+                values: vec![value],
+            },
+            SPACE_S7M => {
+                if value > 1 {
+                    return Err(DriverError::InvalidRequest(format!(
+                        "M 비트 값 {value}는 0 또는 1이어야 한다"
+                    )));
+                }
+                WriteRequest::MBits {
+                    start_bit: u32::from(address),
+                    values: vec![value == 1],
+                }
+            }
+            _ => {
+                return Err(DriverError::InvalidRequest(format!(
+                    "쓰기를 지원하지 않는 영역이다: {space}"
+                )));
+            }
+        };
+        // 접속(필요하면 통신 설정까지)이 참조 번호를 올리므로 먼저 연결한다.
+        self.connect().await?;
+        self.pdu_ref = self.pdu_ref.wrapping_add(1);
+        let frame = encode_write_request(self.pdu_ref, &req)?;
+        let pdu_ref = self.pdu_ref;
+
+        let started = Instant::now();
+        let result = async {
+            let stream = self.stream.as_mut().expect("방금 연결했다");
+            timeout(self.timeout, Self::exchange_write(stream, &frame, pdu_ref))
+                .await
+                .map_err(|_| DriverError::Timeout)?
+        }
+        .await;
+
+        match &result {
+            Ok(()) => {
+                self.status.requests_ok += 1;
+                self.status.last_round_trip = Some(started.elapsed());
+            }
+            Err(e) => {
+                self.status.requests_failed += 1;
+                // 장치가 오류를 응답한 경우 연결은 정상이다. 그 밖의 오류는 연결을 버린다.
+                if !matches!(
+                    e,
+                    DriverError::Device { .. } | DriverError::InvalidRequest(_)
+                ) {
+                    self.drop_connection();
+                }
+            }
+        }
+        result
     }
 }
 

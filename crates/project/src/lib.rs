@@ -716,10 +716,12 @@ impl Project {
                         }
                     }
                     DriverConfig::S7Tcp { .. } => {
-                        return invalid(format!(
-                            "태그 `{}`: S7 장치는 읽기 전용이다 (쓰기 미지원)",
-                            t.name
-                        ));
+                        if !matches!(space, Space::S7Db | Space::S7M) {
+                            return invalid(format!(
+                                "태그 `{}`: S7 쓰기는 s7db·s7m 영역만 허용한다",
+                                t.name
+                            ));
+                        }
                     }
                     DriverConfig::ModbusTcp { .. } => {
                         if !matches!(space, Space::Coil | Space::Holding) || t.unit == 0 {
