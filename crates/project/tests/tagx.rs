@@ -256,3 +256,14 @@ fn keeps_existing_tags_and_avoids_their_names() {
     assert_eq!(again.project.tags.len(), 2);
     assert_eq!(again.project.tags[1].name, "x2");
 }
+
+#[test]
+fn 구형_tag_형식은_읽지못함으로_보고한다() {
+    // 구형 *.TAG 형식의 근거가 이 저장소에 없으므로, 쉼표 텍스트가 아닌
+    // 이진·알 수 없는 줄은 추측 파싱 없이 "읽지 못함"으로 보고해야 한다.
+    let text = "AI,T1,plc1\n\x00\x01\x02BINARY-BLOB\nST,문자열,plc1,0\n";
+    let r = import_tagx(&base(), text, "plc").unwrap();
+    assert_eq!(r.imported_tags, 0);
+    assert!(!r.unreadable_items.is_empty());
+    assert!(r.ignored_items.iter().any(|n| n.item == "문자열"));
+}
