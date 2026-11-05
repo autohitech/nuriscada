@@ -2,7 +2,7 @@
 #   cargo run -p nuriscada-sim-s7 -- --demo
 #   cargo run -p nuriscada-server -- --config examples/demo-s7.toml --init-admin admin
 #   cargo run -p nuriscada-server -- --config examples/demo-s7.toml --enable-writes
-# S7 장치는 읽기 전용이다. DB 번호는 unit, s7db 주소는 바이트, s7m 주소는 비트 번호다.
+# 쓰기는 s7db 워드와 s7m 비트에 허용한다(쓰기 태그에 `writable = true`). DB 번호는 unit, s7db 주소는 바이트, s7m 주소는 비트 번호다.
 
 [server]
 listen = "127.0.0.1:8084"

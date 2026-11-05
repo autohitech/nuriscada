@@ -347,7 +347,8 @@ alarm = { kind = 0 }
 "#;
 
 #[test]
-fn s7_장치와_영역을_받아들이고_쓰기를_거부한다() {
+fn s7_장치의_쓰기와_영역_혼용을_검사한다() {
+    // s7db·s7m 쓰기 허용.
     let p = Project::from_toml(S7).unwrap();
     assert_eq!(p.devices.len(), 1);
     assert_eq!(p.tags.len(), 2);
@@ -357,9 +358,11 @@ fn s7_장치와_영역을_받아들이고_쓰기를_거부한다() {
     assert_eq!(p, reparsed);
 
     let writable = format!(
-        "{S7}\n[[tag]]\nname = \"W\"\nwritable = true\ndevice = \"siemens1\"\nunit = 1\nspace = \"s7db\"\naddress = 0\ntype = \"analog\"\nscale = {{ plc_base = 0, plc_full = 100, base = 0, full = 100 }}\n"
+        "{S7}\n[[tag]]\nname = \"W\"\nwritable = true\ndevice = \"siemens1\"\nunit = 1\nspace = \"s7db\"\naddress = 0\ntype = \"analog\"\nscale = {{ plc_base = 0, plc_full = 100, base = 0, full = 100 }}\n\n[[tag]]\nname = \"M1\"\nwritable = true\ndevice = \"siemens1\"\nunit = 0\nspace = \"s7m\"\naddress = 83\ntype = \"digital\"\n"
     );
-    assert!(err(&writable).contains("읽기 전용"));
+    let p = Project::from_toml(&writable).unwrap();
+    assert!(p.tags.iter().any(|t| t.name == "W" && t.writable));
+    assert!(p.tags.iter().any(|t| t.name == "M1" && t.writable));
 
     let mixed = S7.replace("space = \"s7db\"", "space = \"holding\"");
     assert!(err(&mixed).contains("쓸 수 없다"));

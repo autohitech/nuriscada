@@ -24,6 +24,8 @@ pub const ROSCTR_ACK_DATA: u8 = 0x03;
 pub const FUNC_SETUP: u8 = 0xF0;
 /// 읽기 변수 기능.
 pub const FUNC_READ: u8 = 0x04;
+/// 쓰기 변수 기능.
+pub const FUNC_WRITE: u8 = 0x05;
 /// 요청 PDU 크기(바이트).
 pub const PDU_SIZE: u16 = 480;
 /// M 영역 코드.
@@ -328,6 +330,173 @@ pub fn decode_read_response(req: &ReadRequest, frame: &[u8]) -> Result<BlockData
     }
 }
 
+/// 쓰기 요청. 항목은 하나다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriteRequest {
+    /// DB 워드 쓰기.
+    DbWords {
+        /// DB 번호.
+        db: u16,
+        /// 시작 바이트.
+        start: u16,
+        /// 쓸 워드 값.
+        values: Vec<u16>,
+    },
+    /// M 비트 쓰기.
+    MBits {
+        /// 시작 비트 번호(바이트×8 + 비트).
+        start_bit: u32,
+        /// 쓸 비트 값.
+        values: Vec<bool>,
+    },
+}
+
+/// 쓰기 변수 요청을 만든다. 항목 지정의 길이는 읽기와 같은 약속(워드 바이트·비트 비트)을 따르고, 데이터 항목의 길이는 비트 단위이며 전송 크기는 워드 0x04·비트 0x03이다.
+pub fn encode_write_request(pdu_ref: u16, req: &WriteRequest) -> Result<Vec<u8>, DriverError> {
+    let (transport, spec_len, data_len_bits, db, area, addr_field, data) = match req {
+        WriteRequest::DbWords { db, start, values } => {
+            if values.is_empty() || values.len() > usize::from(MAX_WORD_ITEMS) {
+                return Err(DriverError::InvalidRequest(format!(
+                    "워드 쓰기 개수 {}는 1~{MAX_WORD_ITEMS}이어야 한다",
+                    values.len()
+                )));
+            }
+            if *db > 255 {
+                return Err(DriverError::InvalidRequest(format!(
+                    "DB 번호 {db}는 255 이하여야 한다"
+                )));
+            }
+            let mut data = Vec::with_capacity(values.len() * 2);
+            for v in values {
+                data.extend_from_slice(&v.to_be_bytes());
+            }
+            (
+                TRANS_BYTE,
+                values.len() as u32 * 2,
+                values.len() as u32 * 16,
+                *db,
+                AREA_DB,
+                [
+                    (u32::from(*start) >> 16) as u8,
+                    (u32::from(*start) >> 8) as u8,
+                    (*start & 0xFF) as u8,
+                ],
+                data,
+            )
+        }
+        WriteRequest::MBits { start_bit, values } => {
+            if values.is_empty() || values.len() > usize::from(MAX_BIT_ITEMS) {
+                return Err(DriverError::InvalidRequest(format!(
+                    "비트 쓰기 개수 {}는 1~{MAX_BIT_ITEMS}이어야 한다",
+                    values.len()
+                )));
+            }
+            let byte = start_bit / 8;
+            let bit = (start_bit % 8) as u8;
+            if byte > 0x1F_FFFF {
+                return Err(DriverError::InvalidRequest(format!(
+                    "비트 번호 {start_bit}가 범위를 벗어났다"
+                )));
+            }
+            let addr24 = (byte << 3) | u32::from(bit);
+            let mut data = Vec::with_capacity(values.len().div_ceil(8));
+            let mut cur = 0u8;
+            let mut n = 0;
+            for v in values {
+                if *v {
+                    cur |= 1 << n;
+                }
+                n += 1;
+                if n == 8 {
+                    data.push(cur);
+                    cur = 0;
+                    n = 0;
+                }
+            }
+            if n > 0 {
+                data.push(cur);
+            }
+            // 데이터는 짝수 길이에 맞춘다.
+            if data.len() % 2 == 1 {
+                data.push(0x00);
+            }
+            (
+                TRANS_BIT,
+                values.len() as u32,
+                values.len() as u32,
+                0,
+                AREA_M,
+                [
+                    (addr24 >> 16) as u8,
+                    (addr24 >> 8) as u8,
+                    (addr24 & 0xFF) as u8,
+                ],
+                data,
+            )
+        }
+    };
+    // 데이터 전송 크기는 워드 0x04·비트 0x03이다.
+    let data_transport = if matches!(req, WriteRequest::DbWords { .. }) {
+        0x04
+    } else {
+        0x03
+    };
+    let mut param = vec![FUNC_WRITE, 0x01];
+    param.extend_from_slice(&[
+        ITEM_ANY,
+        0x0A,
+        SYNTAX_ANY,
+        transport,
+        (spec_len >> 8) as u8,
+        (spec_len & 0xFF) as u8,
+        (db >> 8) as u8,
+        (db & 0xFF) as u8,
+        area,
+        addr_field[0],
+        addr_field[1],
+        addr_field[2],
+    ]);
+    let mut data_item = vec![0x00, data_transport];
+    data_item.extend_from_slice(&(data_len_bits as u16).to_be_bytes());
+    data_item.extend_from_slice(&data);
+    let mut pdu = s7_header(
+        ROSCTR_JOB,
+        pdu_ref,
+        param.len() as u16,
+        data_item.len() as u16,
+    );
+    pdu.extend_from_slice(&param);
+    pdu.extend_from_slice(&data_item);
+    Ok(tpkt(&cotp_dt(&pdu)))
+}
+
+/// 쓰기 응답을 해석한다. 성공은 머리 10 + `[0x05, 0x01, 0xFF]`(13바이트)이며,
+/// 항목 수락이 0xFF가 아니면 장치 오류로 본다.
+pub fn decode_write_response(frame: &[u8]) -> Result<(), DriverError> {
+    let pdu = strip_transport(frame)?;
+    if pdu.len() < 13 {
+        return Err(DriverError::Protocol(format!(
+            "S7 PDU가 너무 짧다: {}",
+            pdu.len()
+        )));
+    }
+    if pdu[0] != S7_PROTO || pdu[1] != ROSCTR_ACK_DATA {
+        return Err(DriverError::Protocol(format!(
+            "쓰기 응답이 아니다: {:02X} {:02X}",
+            pdu[0], pdu[1]
+        )));
+    }
+    if pdu[10] != FUNC_WRITE || pdu[11] != 0x01 {
+        return Err(DriverError::Protocol("쓰기 응답 형식이 아니다".into()));
+    }
+    if pdu[12] != 0xFF {
+        return Err(DriverError::Device {
+            code: pdu[12],
+            text: format!("S7 쓰기 항목 오류 {:02X}", pdu[12]),
+        });
+    }
+    Ok(())
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -482,5 +651,93 @@ mod tests {
                 true, false, true, false, false, false, false, false, false, true
             ])
         );
+    }
+
+    #[test]
+    fn db_쓰기_요청_인코딩() {
+        let req = WriteRequest::DbWords {
+            db: 1,
+            start: 0,
+            values: vec![0x1234, 0x5678],
+        };
+        let frame = encode_write_request(1, &req).unwrap();
+        let pdu = strip_transport(&frame).unwrap();
+        assert_eq!(pdu[0..4], [0x32, 0x01, 0x00, 0x00]);
+        assert_eq!(pdu[4..6], [0x01, 0x00]);
+        // 항목 지정: 0x05 0x01 + S7ANY(BYTE, 4바이트).
+        assert_eq!(
+            pdu[10..24],
+            [
+                0x05, 0x01, 0x12, 0x0A, 0x10, 0x02, 0x00, 0x04, 0x00, 0x01, 0x84, 0x00, 0x00, 0x00,
+            ]
+        );
+        // 데이터 항목: 0x00 0x04 + 비트 길이 32 + 값.
+        assert_eq!(
+            pdu[24..32],
+            [0x00, 0x04, 0x00, 0x20, 0x12, 0x34, 0x56, 0x78]
+        );
+        // 빈 쓰기와 DB 초과는 거부한다.
+        let bad = WriteRequest::DbWords {
+            db: 1,
+            start: 0,
+            values: vec![],
+        };
+        assert!(matches!(
+            encode_write_request(1, &bad),
+            Err(DriverError::InvalidRequest(_))
+        ));
+    }
+
+    #[test]
+    fn m_비트_쓰기_요청_인코딩() {
+        // M10.3부터 2비트: 값 true·false.
+        let req = WriteRequest::MBits {
+            start_bit: 10 * 8 + 3,
+            values: vec![true, false],
+        };
+        let frame = encode_write_request(1, &req).unwrap();
+        let pdu = strip_transport(&frame).unwrap();
+        assert_eq!(
+            pdu[10..24],
+            [
+                0x05, 0x01, 0x12, 0x0A, 0x10, 0x01, 0x00, 0x02, 0x00, 0x00, 0x83, 0x00, 0x00, 0x53,
+            ]
+        );
+        // 데이터 항목: 0x00 0x03 + 비트 길이 2 + 1바이트 + 채움.
+        assert_eq!(pdu[24..30], [0x00, 0x03, 0x00, 0x02, 0x01, 0x00]);
+        // 2가 넘는 값은 상위에서 걸러지지만 부호화도 개수를 검사한다.
+        let bad = WriteRequest::MBits {
+            start_bit: 0,
+            values: vec![],
+        };
+        assert!(matches!(
+            encode_write_request(1, &bad),
+            Err(DriverError::InvalidRequest(_))
+        ));
+    }
+
+    #[test]
+    fn 쓰기_응답_해석() {
+        let body = vec![
+            0x32, 0x03, 0x00, 0x00, 0x01, 0x00, 0x00, 0x03, 0x00, 0x00, 0x05, 0x01, 0xFF,
+        ];
+        let mut frame = vec![0x03, 0x00, 0x00, 0x14];
+        frame.extend_from_slice(&[0x02, 0xF0, 0x80]);
+        frame.extend_from_slice(&body);
+        assert!(decode_write_response(&frame).is_ok());
+        // 항목 오류(수락 아님).
+        let mut dev_err = frame.clone();
+        dev_err[19] = 0x05;
+        assert!(matches!(
+            decode_write_response(&dev_err),
+            Err(DriverError::Device { .. })
+        ));
+        // 함수 불일치.
+        let mut not_accepted = frame.clone();
+        not_accepted[17] = 0x04;
+        assert!(matches!(
+            decode_write_response(&not_accepted),
+            Err(DriverError::Protocol(_))
+        ));
     }
 }
