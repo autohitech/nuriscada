@@ -236,6 +236,8 @@ export const ko = {
   editScreen: "화면 편집",
   addScreenBtn: "+ 화면",
   deleteScreen: "화면 삭제",
+  undoEdit: "실행 취소",
+  redoEdit: "다시 실행",
   autoLayout: "태그 자동 배치",
   snap10: "10px 스냅",
   saveScreen: "화면 저장",
