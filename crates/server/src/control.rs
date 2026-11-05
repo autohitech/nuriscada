@@ -14,6 +14,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use nuriscada_driver_api::DataKind;
 use nuriscada_driver_modbus_tcp::ModbusTcpClient;
 use nuriscada_project::{DriverConfig, Space};
 use nuriscada_scheduler::{Quality, now_ms};
@@ -383,7 +384,7 @@ pub(super) async fn control_tags(State(state): State<AppState>) -> Result<Json<V
     let ops = operations(&state)?;
     let project = ops.project();
     Ok(Json(
-        json!({"tags":project.tags.iter().filter(|t|t.writable).map(|t|json!({"name":t.name,"kind":if t.space==Space::Coil{"bool"}else{"word"}})).collect::<Vec<_>>()}),
+        json!({"tags":project.tags.iter().filter(|t|t.writable).map(|t|json!({"name":t.name,"kind":if t.space.kind()==DataKind::Bit{"bool"}else{"word"}})).collect::<Vec<_>>()}),
     ))
 }
 
@@ -655,7 +656,10 @@ pub(super) async fn write_tag(
     blocking(move||db.audit(Event{actor:&actor,source:&source,action:"write.request",target:&target,
         detail:json!({"previous_display_value":old,"requested_raw_value":requested,"outcome":"pending"})})).await?;
     let device = &project.devices[tag.device];
-    let DriverConfig::ModbusTcp { address } = &device.driver;
+    let DriverConfig::ModbusTcp { address } = &device.driver else {
+        // 검증에서 MELSEC 태그의 쓰기를 이미 거부하므로 여기에는 닿지 않는다.
+        return Err(error(StatusCode::NOT_FOUND, Code::WriteTagNotWritable));
+    };
     let mut driver = ModbusTcpClient::new(address.clone(), device.timeout);
     let outcome = driver
         .write_single(tag.unit, tag.space.code(), tag.address, raw)

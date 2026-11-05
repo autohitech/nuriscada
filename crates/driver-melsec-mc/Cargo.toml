@@ -1,0 +1,20 @@
+[package]
+name = "nuriscada-driver-melsec-mc"
+description = "MELSEC MC 프로토콜(3E 바이너리 프레임) 읽기 드라이버."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nuriscada-driver-api = { path = "../driver-api" }
+tokio = { workspace = true, features = ["net", "io-util", "time"] }
+
+[dev-dependencies]
+nuriscada-sim-melsec = { path = "../sim-melsec" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }

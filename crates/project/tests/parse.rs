@@ -142,3 +142,55 @@ max = 100.0
     let unknown_tag = with_screen.replace("tag = \"TANK_LEVEL\"", "tag = \"MISSING_TAG\"");
     assert!(err(&unknown_tag).contains("없는 태그"));
 }
+
+const MELSEC: &str = r#"
+[[device]]
+name = "plc1"
+driver = "melsec-mc"
+address = "127.0.0.1:5007"
+timeout_ms = 300
+scan_ms = 100
+
+[[tag]]
+name = "FURNACE_TEMP"
+device = "plc1"
+space = "d"
+address = 0
+type = "analog"
+unit_text = "℃"
+scale = { plc_base = 0, plc_full = 100, base = 0, full = 100 }
+
+[[tag]]
+name = "RUN_SIGNAL"
+device = "plc1"
+space = "m"
+address = 0
+type = "digital"
+alarm = { kind = 0 }
+"#;
+
+#[test]
+fn melsec_장치와_영역을_받아들인다() {
+    let p = Project::from_toml(MELSEC).unwrap();
+    assert_eq!(p.devices.len(), 1);
+    assert_eq!(p.tags.len(), 2);
+    assert_eq!(p.tags[0].space, Space::MelsecD);
+    assert_eq!(p.tags[1].space, Space::MelsecM);
+    // TOML 왕복.
+    let reparsed = Project::from_toml(&p.to_toml()).unwrap();
+    assert_eq!(p, reparsed);
+}
+
+#[test]
+fn melsec_장치의_쓰기와_영역_혼용을_거부한다() {
+    let writable = format!(
+        "{MELSEC}\n[[tag]]\nname = \"W\"\ndevice = \"plc1\"\nspace = \"d\"\naddress = 1\ntype = \"analog\"\nscale = {{ plc_base = 0, plc_full = 100, base = 0, full = 100 }}\nwritable = true\n"
+    );
+    assert!(err(&writable).contains("읽기 전용"));
+
+    let mixed = MELSEC.replace("space = \"d\"", "space = \"holding\"");
+    assert!(err(&mixed).contains("쓸 수 없다"));
+
+    let mixed_modbus = GOOD.replace("space = \"coil\"", "space = \"m\"");
+    assert!(err(&mixed_modbus).contains("쓸 수 없다"));
+}

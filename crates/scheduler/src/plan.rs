@@ -24,6 +24,14 @@ impl PlanLimits {
         max_bits: 2000,
         max_gap: 8,
     };
+    /// MELSEC MC 일괄 읽기의 보수적 한도(워드 240, 비트 512)와 빈 주소 8개.
+    ///
+    /// 규격의 한도보다 작게 잡아 응답 프레임 여유를 둔다.
+    pub const MELSEC_MC: Self = Self {
+        max_words: 240,
+        max_bits: 512,
+        max_gap: 8,
+    };
 }
 
 /// 계획된 읽기 블록과, 그 안에서 값을 가져갈 태그.
@@ -38,7 +46,9 @@ pub struct PlannedBlock {
 }
 
 /// 프로젝트의 태그를 읽기 블록으로 묶는다. 결과는 장치, 유닛, 영역, 주소 순이다.
-pub fn plan(project: &Project, limits: PlanLimits) -> Vec<PlannedBlock> {
+///
+/// 장치마다 다른 한도를 쓴다(`limits`는 장치 위치를 받아 그 장치의 한도를 돌려준다).
+pub fn plan_with(project: &Project, limits: impl Fn(usize) -> PlanLimits) -> Vec<PlannedBlock> {
     let mut order: Vec<usize> = (0..project.tags.len()).collect();
     order.sort_by_key(|&i| {
         let t = &project.tags[i];
@@ -48,10 +58,11 @@ pub fn plan(project: &Project, limits: PlanLimits) -> Vec<PlannedBlock> {
     let mut blocks: Vec<PlannedBlock> = Vec::new();
     for i in order {
         let t = &project.tags[i];
+        let device_limits = limits(t.device);
         let kind = t.space.kind();
         let max = match kind {
-            DataKind::Bit => limits.max_bits,
-            DataKind::Word => limits.max_words,
+            DataKind::Bit => device_limits.max_bits,
+            DataKind::Word => device_limits.max_words,
         };
         if let Some(last) = blocks.last_mut() {
             let same = last.device == t.device
@@ -60,7 +71,7 @@ pub fn plan(project: &Project, limits: PlanLimits) -> Vec<PlannedBlock> {
             if same {
                 let end = u32::from(last.block.start) + u32::from(last.block.count);
                 let addr = u32::from(t.address);
-                if addr <= end + u32::from(limits.max_gap) {
+                if addr <= end + u32::from(device_limits.max_gap) {
                     let new_end = (addr + 1).max(end);
                     let new_count = new_end - u32::from(last.block.start);
                     if new_count <= u32::from(max) {
@@ -84,6 +95,11 @@ pub fn plan(project: &Project, limits: PlanLimits) -> Vec<PlannedBlock> {
         });
     }
     blocks
+}
+
+/// 프로젝트의 태그를 읽기 블록으로 묶는다. 모든 장치에 같은 한도를 쓴다.
+pub fn plan(project: &Project, limits: PlanLimits) -> Vec<PlannedBlock> {
+    plan_with(project, |_| limits)
 }
 
 #[cfg(test)]

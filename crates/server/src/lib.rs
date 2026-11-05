@@ -20,10 +20,11 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use nuriscada_driver_api::{BlockData, Driver, DriverError, LinkStatus, ReadBlock};
+use nuriscada_driver_melsec_mc::MelsecMcClient;
 use nuriscada_driver_modbus_tcp::ModbusTcpClient;
 use nuriscada_project::{DriverConfig, Project};
 use nuriscada_scheduler::wire::encode_snapshot;
-use nuriscada_scheduler::{Hub, PlanLimits, plan, run_device};
+use nuriscada_scheduler::{Hub, PlanLimits, plan_with, run_device};
 use serde_json::json;
 use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
@@ -37,24 +38,29 @@ pub mod operations;
 pub enum AnyDriver {
     /// MODBUS TCP.
     ModbusTcp(ModbusTcpClient),
+    /// MELSEC MC(읽기 전용).
+    MelsecMc(MelsecMcClient),
 }
 
 impl Driver for AnyDriver {
     async fn connect(&mut self) -> Result<(), DriverError> {
         match self {
             Self::ModbusTcp(d) => d.connect().await,
+            Self::MelsecMc(d) => d.connect().await,
         }
     }
 
     async fn read(&mut self, block: &ReadBlock) -> Result<BlockData, DriverError> {
         match self {
             Self::ModbusTcp(d) => d.read(block).await,
+            Self::MelsecMc(d) => d.read(block).await,
         }
     }
 
     fn status(&self) -> LinkStatus {
         match self {
             Self::ModbusTcp(d) => d.status(),
+            Self::MelsecMc(d) => d.status(),
         }
     }
 }
@@ -77,13 +83,19 @@ impl Scanners {
 
 /// 프로젝트의 장치마다 스캔 작업을 시작한다.
 pub fn start_scanners(project: &Arc<Project>, hub: &Arc<Hub>) -> Scanners {
-    let blocks = plan(project, PlanLimits::MODBUS);
+    let blocks = plan_with(project, |index| match &project.devices[index].driver {
+        DriverConfig::ModbusTcp { .. } => PlanLimits::MODBUS,
+        DriverConfig::MelsecMc { .. } => PlanLimits::MELSEC_MC,
+    });
     let (shutdown, rx) = watch::channel(false);
     let mut tasks = vec![hub.spawn_publisher(project.server.publish, rx.clone())];
     for (index, device) in project.devices.iter().enumerate() {
         let driver = match &device.driver {
             DriverConfig::ModbusTcp { address } => {
                 AnyDriver::ModbusTcp(ModbusTcpClient::new(address.clone(), device.timeout))
+            }
+            DriverConfig::MelsecMc { address } => {
+                AnyDriver::MelsecMc(MelsecMcClient::new(address.clone(), device.timeout))
             }
         };
         let device_blocks = blocks
