@@ -15,6 +15,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use nuriscada_driver_api::DataKind;
+use nuriscada_driver_melsec_mc::MelsecMcClient;
 use nuriscada_driver_modbus_tcp::ModbusTcpClient;
 use nuriscada_project::{DriverConfig, Space};
 use nuriscada_scheduler::{Quality, now_ms};
@@ -633,8 +634,8 @@ pub(super) async fn write_tag(
         .cloned()
         .ok_or_else(|| error(StatusCode::NOT_FOUND, Code::WriteTagNotWritable))?;
     let raw = match tag.space {
-        Space::Coil => input.value.as_bool().map(u16::from),
-        Space::Holding => input.value.as_u64().and_then(|v| u16::try_from(v).ok()),
+        Space::Coil | Space::MelsecM => input.value.as_bool().map(u16::from),
+        Space::Holding | Space::MelsecD => input.value.as_u64().and_then(|v| u16::try_from(v).ok()),
         _ => None,
     }
     .ok_or_else(|| error(StatusCode::BAD_REQUEST, Code::WriteBadValue))?;
@@ -656,14 +657,20 @@ pub(super) async fn write_tag(
     blocking(move||db.audit(Event{actor:&actor,source:&source,action:"write.request",target:&target,
         detail:json!({"previous_display_value":old,"requested_raw_value":requested,"outcome":"pending"})})).await?;
     let device = &project.devices[tag.device];
-    let DriverConfig::ModbusTcp { address } = &device.driver else {
-        // 검증에서 MELSEC 태그의 쓰기를 이미 거부하므로 여기에는 닿지 않는다.
-        return Err(error(StatusCode::NOT_FOUND, Code::WriteTagNotWritable));
+    let outcome = match &device.driver {
+        DriverConfig::ModbusTcp { address } => {
+            let mut driver = ModbusTcpClient::new(address.clone(), device.timeout);
+            driver
+                .write_single(tag.unit, tag.space.code(), tag.address, raw)
+                .await
+        }
+        DriverConfig::MelsecMc { address } => {
+            let mut driver = MelsecMcClient::new(address.clone(), device.timeout);
+            driver
+                .write_single(tag.unit, tag.space.code(), tag.address, raw)
+                .await
+        }
     };
-    let mut driver = ModbusTcpClient::new(address.clone(), device.timeout);
-    let outcome = driver
-        .write_single(tag.unit, tag.space.code(), tag.address, raw)
-        .await;
     let detail = match &outcome {
         Ok(()) => json!({"requested_raw_value":input.value,"outcome":"device_acknowledged"}),
         Err(e) => {

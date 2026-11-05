@@ -183,10 +183,29 @@ fn melsec_장치와_영역을_받아들인다() {
 
 #[test]
 fn melsec_장치의_쓰기와_영역_혼용을_거부한다() {
-    let writable = format!(
+    // d·writable 허용, w·r·m 외 쓰기 거부.
+    let writable_d = format!(
         "{MELSEC}\n[[tag]]\nname = \"W\"\ndevice = \"plc1\"\nspace = \"d\"\naddress = 1\ntype = \"analog\"\nscale = {{ plc_base = 0, plc_full = 100, base = 0, full = 100 }}\nwritable = true\n"
     );
-    assert!(err(&writable).contains("읽기 전용"));
+    let p = Project::from_toml(&writable_d).unwrap();
+    assert!(p.tags.iter().any(|t| t.name == "W" && t.writable));
+
+    let writable_w = r#"
+[[device]]
+name = "plc1"
+driver = "melsec-mc"
+address = "127.0.0.1:5007"
+
+[[tag]]
+name = "W"
+writable = true
+device = "plc1"
+space = "w"
+address = 0
+type = "analog"
+scale = { plc_base = 0, plc_full = 100, base = 0, full = 100 }
+"#;
+    assert!(err(writable_w).contains("d·m 영역만"));
 
     let mixed = MELSEC.replace("space = \"d\"", "space = \"holding\"");
     assert!(err(&mixed).contains("쓸 수 없다"));

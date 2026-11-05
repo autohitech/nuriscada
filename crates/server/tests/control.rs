@@ -749,3 +749,160 @@ async fn errors_carry_stable_codes_and_a_default_message() {
         "{body}"
     );
 }
+
+#[tokio::test]
+async fn melsec_쓰기가_장치에_닿고_감사에_남는다() {
+    use nuriscada_sim_melsec::Simulator as MelsecSim;
+    let sim = MelsecSim::start("127.0.0.1:0", 10, 10).await.unwrap();
+    let project = Arc::new(
+        Project::from_toml(&format!(
+            r#"
+[[device]]
+name="plc1"
+driver="melsec-mc"
+address="{}"
+scan_ms=20
+[[tag]]
+name="LEVEL"
+device="plc1"
+space="d"
+address=0
+type="analog"
+writable=true
+scale={{plc_base=0,plc_full=100,base=0,full=100}}
+[[tag]]
+name="RUN"
+device="plc1"
+space="m"
+address=0
+type="digital"
+writable=true
+"#,
+            sim.addr()
+        ))
+        .unwrap(),
+    );
+    let ops = Operations::open_with_mode(
+        std::path::Path::new(":memory:"),
+        project.clone(),
+        true,
+        false,
+    )
+    .unwrap();
+    ops.create_user("admin", PASSWORD, Role::Admin, true, "cli", "cli")
+        .unwrap();
+    ops.create_user("operator", PASSWORD, Role::Operator, false, "admin", "cli")
+        .unwrap();
+    let hub = Hub::new(&project);
+    let archive = ops.start_archive(hub.clone());
+    let scanners = start_scanners(&project, &hub);
+    ops.attach_scanners(scanners).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router_with_operations(hub, addr, None, ops.clone());
+    let _task = tokio::spawn(async move {
+        let _archive = archive;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (code, headers, _) = request(
+        addr,
+        "POST",
+        "/api/v1/auth/login",
+        "",
+        json!({"username":"operator","password":PASSWORD}),
+        "X-NuriScada-Request: 1\r\n",
+    )
+    .await;
+    assert_eq!(code, 200, "{headers}");
+    let cookie = headers
+        .lines()
+        .find_map(|l| {
+            l.to_lowercase().starts_with("set-cookie:").then(|| {
+                l.split_once(':')
+                    .unwrap()
+                    .1
+                    .trim()
+                    .split(';')
+                    .next()
+                    .unwrap()
+                    .to_string()
+            })
+        })
+        .unwrap();
+
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/LEVEL",
+        &cookie,
+        json!({"value": 321}),
+        "X-NuriScada-Request: 1\r\n",
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(sim.state().d[0], 321);
+
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/RUN",
+        &cookie,
+        json!({"value": true}),
+        "X-NuriScada-Request: 1\r\n",
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    assert!(sim.state().m[0]);
+
+    // 감사에 쓰기 요청·결과가 남는다.
+    let (admin_code, admin_headers, _) = request(
+        addr,
+        "POST",
+        "/api/v1/auth/login",
+        "",
+        json!({"username":"admin","password":PASSWORD}),
+        "X-NuriScada-Request: 1\r\n",
+    )
+    .await;
+    assert_eq!(admin_code, 200);
+    let admin_cookie = admin_headers
+        .lines()
+        .find_map(|l| {
+            l.to_lowercase().starts_with("set-cookie:").then(|| {
+                l.split_once(':')
+                    .unwrap()
+                    .1
+                    .trim()
+                    .split(';')
+                    .next()
+                    .unwrap()
+                    .to_string()
+            })
+        })
+        .unwrap();
+    let (code, _, body) = request(
+        addr,
+        "GET",
+        "/api/v1/audit?limit=50",
+        &admin_cookie,
+        json!({}),
+        "",
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    let actions: Vec<&str> = body["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["event"]["action"].as_str())
+        .collect();
+    assert!(actions.contains(&"write.request"));
+    assert!(actions.contains(&"write.result"));
+}

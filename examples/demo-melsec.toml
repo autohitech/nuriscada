@@ -1,8 +1,8 @@
 # MELSEC MC 시연용 프로젝트: `nuriscada-sim-melsec --demo`와 함께 쓴다.
 #   cargo run -p nuriscada-sim-melsec -- --demo
 #   cargo run -p nuriscada-server -- --config examples/demo-melsec.toml --init-admin admin
-#   cargo run -p nuriscada-server -- --config examples/demo-melsec.toml
-# MELSEC 장치는 읽기 전용이다. X·Y 주소는 16진 장치 번호다(X10 = 0x10).
+#   cargo run -p nuriscada-server -- --config examples/demo-melsec.toml --enable-writes
+# 쓰기는 D·M 영역만 허용한다. X·Y 주소는 16진 장치 번호다(X10 = 0x10).
 
 [server]
 listen = "127.0.0.1:8081"
@@ -12,10 +12,9 @@ name = "plc1"
 driver = "melsec-mc"
 address = "127.0.0.1:5007"
 timeout_ms = 500
-scan_ms = 100
-
 [[tag]]
 name = "FURNACE_TEMP"
+writable = true
 device = "plc1"
 space = "d"
 address = 0
@@ -26,6 +25,7 @@ alarm = { kind = 6, hihi = 90, high = 70, low = 30, lolo = 10, gap = 5 }
 
 [[tag]]
 name = "RUN_SIGNAL"
+writable = true
 device = "plc1"
 space = "m"
 address = 0

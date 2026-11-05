@@ -585,12 +585,13 @@ impl Project {
             }
             if t.writable {
                 if is_melsec {
-                    return invalid(format!(
-                        "태그 `{}`: MELSEC 장치는 읽기 전용이다 (쓰기 미지원)",
-                        t.name
-                    ));
-                }
-                if !matches!(space, Space::Coil | Space::Holding) || t.unit == 0 {
+                    if !matches!(space, Space::MelsecD | Space::MelsecM) {
+                        return invalid(format!(
+                            "태그 `{}`: MELSEC 쓰기는 d·m 영역만 허용한다",
+                            t.name
+                        ));
+                    }
+                } else if !matches!(space, Space::Coil | Space::Holding) || t.unit == 0 {
                     return invalid(format!(
                         "태그 `{}`: 쓰기는 유닛 1 이상인 coil·holding만 허용한다",
                         t.name

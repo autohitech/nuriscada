@@ -190,3 +190,55 @@ async fn 연결_실패는_연결_오류다() {
         Err(DriverError::Connection(_) | DriverError::Timeout)
     ));
 }
+
+#[tokio::test]
+async fn 단일_d와_m_쓰기_후_읽힌다() {
+    let (sim, mut client) = setup().await;
+    client.write_single(0, SPACE_D, 5, 321).await.unwrap();
+    assert_eq!(
+        client
+            .read(&block(SPACE_D, 5, 1, DataKind::Word))
+            .await
+            .unwrap(),
+        BlockData::Words(vec![321])
+    );
+    client.write_single(0, SPACE_M, 3, 1).await.unwrap();
+    assert_eq!(
+        client
+            .read(&block(SPACE_M, 3, 1, DataKind::Bit))
+            .await
+            .unwrap(),
+        BlockData::Bits(vec![true])
+    );
+    client.write_single(0, SPACE_M, 3, 0).await.unwrap();
+    assert_eq!(
+        client
+            .read(&block(SPACE_M, 3, 1, DataKind::Bit))
+            .await
+            .unwrap(),
+        BlockData::Bits(vec![false])
+    );
+    assert!(sim.state().d[5] == 321 && !sim.state().m[3]);
+}
+
+#[tokio::test]
+async fn 지원하지_않는_영역_쓰기는_거부한다() {
+    let (_sim, mut client) = setup().await;
+    assert!(matches!(
+        client.write_single(0, SPACE_W, 0, 1).await,
+        Err(DriverError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        client.write_single(0, 999, 0, 1).await,
+        Err(DriverError::InvalidRequest(_))
+    ));
+}
+
+#[tokio::test]
+async fn 범위를_벗어난_쓰기는_장치_오류다() {
+    let (_sim, mut client) = setup().await;
+    assert!(matches!(
+        client.write_single(0, SPACE_D, 200, 1).await,
+        Err(DriverError::Device { .. })
+    ));
+}
