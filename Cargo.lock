@@ -471,6 +471,15 @@ name = "nuriscada-driver-api"
 version = "0.1.0-alpha.1"
 
 [[package]]
+name = "nuriscada-driver-melsec-mc"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "nuriscada-driver-api",
+ "nuriscada-sim-melsec",
+ "tokio",
+]
+
+[[package]]
 name = "nuriscada-driver-modbus-tcp"
 version = "0.1.0-alpha.1"
 dependencies = [
@@ -511,9 +520,11 @@ dependencies = [
  "futures-util",
  "getrandom",
  "nuriscada-driver-api",
+ "nuriscada-driver-melsec-mc",
  "nuriscada-driver-modbus-tcp",
  "nuriscada-project",
  "nuriscada-scheduler",
+ "nuriscada-sim-melsec",
  "nuriscada-sim-modbus",
  "rpassword",
  "rusqlite",
@@ -522,6 +533,13 @@ dependencies = [
  "sha2",
  "tokio",
  "tokio-tungstenite",
+]
+
+[[package]]
+name = "nuriscada-sim-melsec"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "tokio",
 ]
 
 [[package]]

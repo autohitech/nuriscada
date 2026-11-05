@@ -318,3 +318,69 @@ async fn serves_the_web_ui_safely() {
     assert!(status.to_lowercase().contains("x-frame-options: deny"));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[tokio::test]
+async fn melsec_값과_상태가_흐른다() {
+    use nuriscada_sim_melsec::Simulator as MelsecSim;
+    let sim = MelsecSim::start("127.0.0.1:0", 100, 64).await.unwrap();
+    sim.set_d(0, &[95]);
+    sim.set_m(0, &[true]);
+    let project = Arc::new(
+        Project::from_toml(&format!(
+            r#"
+[[device]]
+name = "plc1"
+driver = "melsec-mc"
+address = "{}"
+timeout_ms = 300
+scan_ms = 20
+
+[[tag]]
+name = "TEMP"
+device = "plc1"
+space = "d"
+address = 0
+type = "analog"
+unit_text = "℃"
+scale = {{ plc_base = 0, plc_full = 100, base = 0, full = 100 }}
+alarm = {{ kind = 1, hihi = 90, gap = 5 }}
+
+[[tag]]
+name = "RUN"
+device = "plc1"
+space = "m"
+address = 0
+type = "digital"
+"#,
+            sim.addr()
+        ))
+        .unwrap(),
+    );
+    let hub = Hub::new(&project);
+    let scanners = start_scanners(&project, &hub);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router(hub, addr);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    wait_for(|| async {
+        let doc = json(addr, "/api/v1/tags").await;
+        tag(&doc, "TEMP")["value"] == 95.0
+    })
+    .await;
+    let doc = json(addr, "/api/v1/tags").await;
+    assert_eq!(tag(&doc, "RUN")["value"], true);
+    let status = json(addr, "/api/v1/status").await;
+    assert_eq!(status["devices"][0]["connected"], true);
+    let alarms = json(addr, "/api/v1/alarms").await;
+    assert!(
+        alarms["active"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["name"] == "TEMP")
+    );
+    scanners.stop().await;
+}
