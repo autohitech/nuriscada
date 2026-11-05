@@ -49,9 +49,11 @@
           ? idx % 2 === 0
             ? "tank"
             : "gauge"
-          : idx % 2 === 0
-            ? "pump"
-            : "lamp";
+          : t.kind === "string"
+            ? "value"
+            : idx % 2 === 0
+              ? "pump"
+              : "lamp";
       return {
         id: `auto-${idx + 1}`,
         kind,

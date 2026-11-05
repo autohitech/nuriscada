@@ -39,13 +39,15 @@ pub enum Quality {
 }
 
 /// 태그 값.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum TagValue {
     /// 아날로그 값.
     Number(f64),
     /// 디지털 값.
     Bool(bool),
+    /// 문자열 값(표시 전용, 스캔하지 않는다).
+    Text(String),
 }
 
 /// 태그의 현재 상태.
@@ -177,18 +179,31 @@ impl Hub {
             .tags
             .iter()
             .map(|t| {
-                let (kind, unit_text, has_alarm) = match &t.body {
+                let (kind, unit_text, has_alarm, initial) = match &t.body {
                     TagBody::Analog {
                         unit_text, alarm, ..
-                    } => ("analog", unit_text.clone(), alarm.is_some()),
-                    TagBody::Digital { .. } => ("digital", String::new(), false),
+                    } => ("analog", unit_text.clone(), alarm.is_some(), None),
+                    TagBody::Digital { .. } => ("digital", String::new(), false, None),
+                    TagBody::String {
+                        unit_text, initial, ..
+                    } => (
+                        "string",
+                        unit_text.clone(),
+                        false,
+                        Some(TagValue::Text(initial.clone())),
+                    ),
+                };
+                // 문자열 태그는 스캔하지 않으므로 초기 문자열을 Good 품질로 둔다.
+                let (value, quality) = match initial {
+                    Some(v) => (Some(v), Quality::Good),
+                    None => (None, Quality::Bad),
                 };
                 TagSnapshot {
                     name: t.name.clone(),
                     device: project.devices[t.device].name.clone(),
                     kind,
-                    value: None,
-                    quality: Quality::Bad,
+                    value,
+                    quality,
                     changed_ms: 0,
                     unit_text,
                     alarm_state: has_alarm.then_some("NORMAL"),
@@ -241,18 +256,31 @@ impl Hub {
             .tags
             .iter()
             .map(|t| {
-                let (kind, unit_text, has_alarm) = match &t.body {
+                let (kind, unit_text, has_alarm, initial) = match &t.body {
                     TagBody::Analog {
                         unit_text, alarm, ..
-                    } => ("analog", unit_text.clone(), alarm.is_some()),
-                    TagBody::Digital { .. } => ("digital", String::new(), false),
+                    } => ("analog", unit_text.clone(), alarm.is_some(), None),
+                    TagBody::Digital { .. } => ("digital", String::new(), false, None),
+                    TagBody::String {
+                        unit_text, initial, ..
+                    } => (
+                        "string",
+                        unit_text.clone(),
+                        false,
+                        Some(TagValue::Text(initial.clone())),
+                    ),
+                };
+                // 문자열 태그는 스캔하지 않으므로 초기 문자열을 Good 품질로 둔다.
+                let (value, quality) = match initial {
+                    Some(v) => (Some(v), Quality::Good),
+                    None => (None, Quality::Bad),
                 };
                 TagSnapshot {
                     name: t.name.clone(),
                     device: project.devices[t.device].name.clone(),
                     kind,
-                    value: None,
-                    quality: Quality::Bad,
+                    value,
+                    quality,
                     changed_ms: 0,
                     unit_text,
                     alarm_state: has_alarm.then_some("NORMAL"),
@@ -342,7 +370,7 @@ impl Hub {
             .map(|i| {
                 inner.is_dirty[i] = false;
                 let t = &inner.tags[i];
-                (i, t.value, t.quality, t.alarm_state)
+                (i, t.value.clone(), t.quality, t.alarm_state)
             })
             .collect();
         inner.publish_seq += 1;
@@ -451,7 +479,7 @@ impl Hub {
     ) {
         let mut inner = self.write();
         let tag = &mut inner.tags[index];
-        let new_value = value.or(tag.value);
+        let new_value = value.or_else(|| tag.value.clone());
         let new_state = alarm_state.or(tag.alarm_state);
         if tag.value == new_value && tag.quality == quality && tag.alarm_state == new_state {
             return;

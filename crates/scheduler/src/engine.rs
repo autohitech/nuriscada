@@ -36,7 +36,7 @@ impl DeviceEngine {
             .tags
             .iter()
             .enumerate()
-            .filter(|(_, t)| t.device == device)
+            .filter(|(_, t)| t.device == device && !matches!(t.body, TagBody::String { .. }))
         {
             let slot = match &t.body {
                 TagBody::Analog { scale, alarm, .. } => Slot::Analog {
@@ -53,6 +53,8 @@ impl DeviceEngine {
                         )
                     }),
                 },
+                // 문자열 태그는 위 필터에서 제외되므로 여기에는 닿지 않는다.
+                TagBody::String { .. } => unreachable!("문자열 태그는 스캔 슬롯이 없다"),
             };
             slots.insert(i, slot);
         }

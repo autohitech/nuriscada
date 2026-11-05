@@ -323,6 +323,7 @@ fn build_tag(
                 }),
                 alarm,
                 unit_text,
+                value: None,
             })
         }
         _ => {
@@ -364,6 +365,7 @@ fn build_tag(
                 scale: None,
                 alarm,
                 unit_text: String::new(),
+                value: None,
             })
         }
     }

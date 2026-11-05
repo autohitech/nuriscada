@@ -4,7 +4,7 @@
 //! 읽기 계획: 같은 장치·유닛·영역의 태그 주소를 묶어 블록으로 읽는다.
 
 use nuriscada_driver_api::{DataKind, ReadBlock};
-use nuriscada_project::Project;
+use nuriscada_project::{Project, TagBody};
 
 /// 블록을 만드는 한도.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +76,10 @@ pub fn plan_with(project: &Project, limits: impl Fn(usize) -> PlanLimits) -> Vec
     let mut blocks: Vec<PlannedBlock> = Vec::new();
     for i in order {
         let t = &project.tags[i];
+        // 문자열 태그는 스캔하지 않으므로 읽기 블록을 만들지 않는다.
+        if matches!(t.body, TagBody::String { .. }) {
+            continue;
+        }
         let device_limits = limits(t.device);
         let kind = t.space.kind();
         let max = match kind {

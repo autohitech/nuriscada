@@ -144,6 +144,7 @@ export const en: Messages = {
   address: "Address",
   allowWrite: "Allow writing",
   unitText: "Unit label",
+  tagString: "Text",
   useAlarm: "Use alarm",
   removeTag: "Remove tag",
   plcBase: "PLC low",
