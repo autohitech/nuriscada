@@ -56,6 +56,32 @@ export type StreamMessage =
   | { type: "tags"; data: { seq: number; time_ms: number; items: TagItem[] } }
   | { type: "alarms"; data: AlarmRecord[] };
 
+export interface ImportNotice {
+  line: number;
+  item: string;
+  detail: string;
+}
+
+export interface ImportRename {
+  line: number;
+  original: string;
+  resolved: string;
+}
+
+export interface ImportReport {
+  imported_devices: number;
+  imported_tags: number;
+  renamed_tags: ImportRename[];
+  modified_items: ImportNotice[];
+  ignored_items: ImportNotice[];
+  unreadable_items: ImportNotice[];
+}
+
+export interface ImportResult {
+  ok: boolean;
+  applied: boolean;
+  report: ImportReport;
+}
 export interface ServerSpec {
   listen: string;
   publish_ms: number;
