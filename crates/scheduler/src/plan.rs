@@ -32,6 +32,12 @@ impl PlanLimits {
         max_bits: 512,
         max_gap: 8,
     };
+    /// XGT 개별 읽기의 한도(한 요청 16변수). 각 변수를 이름으로 지정하므로 빈틈을 묶지 않는다.
+    pub const XGT_FENET: Self = Self {
+        max_words: 16,
+        max_bits: 16,
+        max_gap: 0,
+    };
 }
 
 /// 계획된 읽기 블록과, 그 안에서 값을 가져갈 태그.

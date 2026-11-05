@@ -64,9 +64,14 @@ pub enum DriverConfig {
         /// `host:port`.
         address: String,
     },
-    /// MELSEC MC 프로토콜(3E 바이너리, 읽기 전용).
+    /// MELSEC MC 프로토콜(3E 바이너리).
     MelsecMc {
         /// `host:port`(기본 5007).
+        address: String,
+    },
+    /// XGT 전용 프로토콜(FEnet, 읽기 전용).
+    XgtFenet {
+        /// `host:port`(기본 2004).
         address: String,
     },
 }
@@ -85,8 +90,8 @@ pub struct Device {
 }
 
 /// 메모리 영역. MODBUS 영역(coil·discrete·holding·input)과
-/// MELSEC 영역(d·w·r 워드, m·x·y 비트)을 함께 쓴다.
-/// X·Y 주소는 16진 장치 번호다(X10 = 0x10).
+/// MELSEC 영역(d·w·r 워드, m·x·y 비트), XGT 영역(mw 워드, mx 비트)을 함께 쓴다.
+/// MELSEC X·Y 주소는 16진 장치 번호다(X10 = 0x10). XGT 주소는 10진 번호다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Space {
     /// 코일(MODBUS).
@@ -109,18 +114,28 @@ pub enum Space {
     MelsecX,
     /// Y 출력(MELSEC 비트, 16진 주소).
     MelsecY,
+    /// %MW 워드(XGT).
+    XgtMw,
+    /// %MX 비트(XGT, 10진 번호).
+    XgtMx,
 }
 
 impl Space {
     /// 영역의 데이터 종류.
     pub fn kind(self) -> DataKind {
         match self {
-            Self::Coil | Self::Discrete | Self::MelsecM | Self::MelsecX | Self::MelsecY => {
-                DataKind::Bit
-            }
-            Self::Holding | Self::Input | Self::MelsecD | Self::MelsecW | Self::MelsecR => {
-                DataKind::Word
-            }
+            Self::Coil
+            | Self::Discrete
+            | Self::MelsecM
+            | Self::MelsecX
+            | Self::MelsecY
+            | Self::XgtMx => DataKind::Bit,
+            Self::Holding
+            | Self::Input
+            | Self::MelsecD
+            | Self::MelsecW
+            | Self::MelsecR
+            | Self::XgtMw => DataKind::Word,
         }
     }
 
@@ -137,6 +152,8 @@ impl Space {
             Self::MelsecM => 20,
             Self::MelsecX => 21,
             Self::MelsecY => 22,
+            Self::XgtMw => 30,
+            Self::XgtMx => 31,
         }
     }
 
@@ -153,7 +170,14 @@ impl Space {
             Self::MelsecM => "m",
             Self::MelsecX => "x",
             Self::MelsecY => "y",
+            Self::XgtMw => "mw",
+            Self::XgtMx => "mx",
         }
+    }
+
+    /// XGT 장치의 영역인가.
+    pub fn is_xgt(self) -> bool {
+        matches!(self, Self::XgtMw | Self::XgtMx)
     }
 
     /// MELSEC 장치의 영역인가.
@@ -461,8 +485,10 @@ fn parse_space(s: &str) -> Result<Space, ConfigError> {
         "m" => Ok(Space::MelsecM),
         "x" => Ok(Space::MelsecX),
         "y" => Ok(Space::MelsecY),
+        "mw" => Ok(Space::XgtMw),
+        "mx" => Ok(Space::XgtMx),
         other => invalid(format!(
-            "알 수 없는 영역 `{other}` (coil, discrete, holding, input, d, w, r, m, x, y 중 하나)"
+            "알 수 없는 영역 `{other}` (coil, discrete, holding, input, d, w, r, m, x, y, mw, mx 중 하나)"
         )),
     }
 }
@@ -534,9 +560,10 @@ impl Project {
             let driver = match d.driver.as_str() {
                 "modbus-tcp" => DriverConfig::ModbusTcp { address: d.address },
                 "melsec-mc" => DriverConfig::MelsecMc { address: d.address },
+                "xgt-fenet" => DriverConfig::XgtFenet { address: d.address },
                 other => {
                     return invalid(format!(
-                        "장치 `{}`: 지원하지 않는 드라이버 `{other}` (modbus-tcp, melsec-mc 중 하나)",
+                        "장치 `{}`: 지원하지 않는 드라이버 `{other}` (modbus-tcp, melsec-mc, xgt-fenet 중 하나)",
                         d.name
                     ));
                 }
@@ -574,35 +601,53 @@ impl Project {
                     ConfigError::Invalid(format!("태그 `{}`: 없는 장치 `{}`", t.name, t.device))
                 })?;
             let space = parse_space(&t.space)?;
-            let is_melsec = matches!(devices[device].driver, DriverConfig::MelsecMc { .. });
-            if space.is_melsec() != is_melsec {
+            let family = match &devices[device].driver {
+                DriverConfig::ModbusTcp { .. } => "MODBUS",
+                DriverConfig::MelsecMc { .. } => "MELSEC",
+                DriverConfig::XgtFenet { .. } => "XGT",
+            };
+            let belongs = match &devices[device].driver {
+                DriverConfig::ModbusTcp { .. } => !space.is_melsec() && !space.is_xgt(),
+                DriverConfig::MelsecMc { .. } => space.is_melsec(),
+                DriverConfig::XgtFenet { .. } => space.is_xgt(),
+            };
+            if !belongs {
                 return invalid(format!(
-                    "태그 `{}`: 영역 `{}`은 {} 장치에 쓸 수 없다",
-                    t.name,
-                    t.space,
-                    if is_melsec { "MELSEC" } else { "MODBUS" }
+                    "태그 `{}`: 영역 `{}`은 {family} 장치에 쓸 수 없다",
+                    t.name, t.space
                 ));
             }
             if t.writable {
-                if is_melsec {
-                    if !matches!(space, Space::MelsecD | Space::MelsecM) {
+                match &devices[device].driver {
+                    DriverConfig::MelsecMc { .. } => {
+                        if !matches!(space, Space::MelsecD | Space::MelsecM) {
+                            return invalid(format!(
+                                "태그 `{}`: MELSEC 쓰기는 d·m 영역만 허용한다",
+                                t.name
+                            ));
+                        }
+                    }
+                    DriverConfig::XgtFenet { .. } => {
                         return invalid(format!(
-                            "태그 `{}`: MELSEC 쓰기는 d·m 영역만 허용한다",
+                            "태그 `{}`: XGT 장치는 읽기 전용이다 (쓰기 미지원)",
                             t.name
                         ));
                     }
-                } else if !matches!(space, Space::Coil | Space::Holding) || t.unit == 0 {
-                    return invalid(format!(
-                        "태그 `{}`: 쓰기는 유닛 1 이상인 coil·holding만 허용한다",
-                        t.name
-                    ));
+                    DriverConfig::ModbusTcp { .. } => {
+                        if !matches!(space, Space::Coil | Space::Holding) || t.unit == 0 {
+                            return invalid(format!(
+                                "태그 `{}`: 쓰기는 유닛 1 이상인 coil·holding만 허용한다",
+                                t.name
+                            ));
+                        }
+                    }
                 }
             }
             let body = match t.kind.as_str() {
                 "analog" => {
                     if space.kind() != DataKind::Word {
                         return invalid(format!(
-                            "태그 `{}`: 아날로그 태그는 워드 영역(holding·input·d·w·r)이어야 한다",
+                            "태그 `{}`: 아날로그 태그는 워드 영역(holding·input·d·w·r·mw)이어야 한다",
                             t.name
                         ));
                     }
@@ -650,7 +695,7 @@ impl Project {
                 "digital" => {
                     if space.kind() != DataKind::Bit {
                         return invalid(format!(
-                            "태그 `{}`: 디지털 태그는 비트 영역(coil·discrete·m·x·y)이어야 한다",
+                            "태그 `{}`: 디지털 태그는 비트 영역(coil·discrete·m·x·y·mx)이어야 한다",
                             t.name
                         ));
                     }
@@ -774,6 +819,7 @@ impl Project {
                     let (driver, address) = match &d.driver {
                         DriverConfig::ModbusTcp { address } => ("modbus-tcp", address),
                         DriverConfig::MelsecMc { address } => ("melsec-mc", address),
+                        DriverConfig::XgtFenet { address } => ("xgt-fenet", address),
                     };
                     DeviceSpec {
                         name: d.name.clone(),

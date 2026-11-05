@@ -15,6 +15,7 @@ workspace = true
 nuriscada-driver-api = { path = "../driver-api" }
 nuriscada-driver-melsec-mc = { path = "../driver-melsec-mc" }
 nuriscada-driver-modbus-tcp = { path = "../driver-modbus-tcp" }
+nuriscada-driver-xgt-fenet = { path = "../driver-xgt-fenet" }
 nuriscada-project = { path = "../project" }
 nuriscada-scheduler = { path = "../scheduler" }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "ws", "query"] }
@@ -29,6 +30,7 @@ rpassword = "7"
 [dev-dependencies]
 nuriscada-sim-modbus = { path = "../sim-modbus" }
 nuriscada-sim-melsec = { path = "../sim-melsec" }
+nuriscada-sim-xgt = { path = "../sim-xgt" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

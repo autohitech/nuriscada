@@ -213,3 +213,48 @@ scale = { plc_base = 0, plc_full = 100, base = 0, full = 100 }
     let mixed_modbus = GOOD.replace("space = \"coil\"", "space = \"m\"");
     assert!(err(&mixed_modbus).contains("쓸 수 없다"));
 }
+
+const XGT: &str = r#"
+[[device]]
+name = "xgt1"
+driver = "xgt-fenet"
+address = "127.0.0.1:2004"
+timeout_ms = 300
+scan_ms = 100
+
+[[tag]]
+name = "TEMP"
+device = "xgt1"
+space = "mw"
+address = 100
+type = "analog"
+unit_text = "℃"
+scale = { plc_base = 0, plc_full = 100, base = 0, full = 100 }
+
+[[tag]]
+name = "RUN"
+device = "xgt1"
+space = "mx"
+address = 0
+type = "digital"
+alarm = { kind = 0 }
+"#;
+
+#[test]
+fn xgt_장치와_영역을_받아들이고_쓰기를_거부한다() {
+    let p = Project::from_toml(XGT).unwrap();
+    assert_eq!(p.devices.len(), 1);
+    assert_eq!(p.tags.len(), 2);
+    assert_eq!(p.tags[0].space, Space::XgtMw);
+    assert_eq!(p.tags[1].space, Space::XgtMx);
+    let reparsed = Project::from_toml(&p.to_toml()).unwrap();
+    assert_eq!(p, reparsed);
+
+    let writable = format!(
+        "{XGT}\n[[tag]]\nname = \"W\"\ndevice = \"xgt1\"\nspace = \"mw\"\naddress = 1\ntype = \"analog\"\nscale = {{ plc_base = 0, plc_full = 100, base = 0, full = 100 }}\nwritable = true\n"
+    );
+    assert!(err(&writable).contains("읽기 전용"));
+
+    let mixed = XGT.replace("space = \"mw\"", "space = \"holding\"");
+    assert!(err(&mixed).contains("쓸 수 없다"));
+}

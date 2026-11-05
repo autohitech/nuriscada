@@ -115,11 +115,11 @@
 
   function onTagTypeChange(tag: TagSpec) {
     if (tag.type === "analog") {
-      if (tag.space === "coil" || tag.space === "discrete" || tag.space === "m" || tag.space === "x" || tag.space === "y") tag.space = "holding";
+      if (tag.space === "coil" || tag.space === "discrete" || tag.space === "m" || tag.space === "x" || tag.space === "y" || tag.space === "mx") tag.space = "holding";
       if (!tag.scale) tag.scale = { plc_base: 0, plc_full: 100, base: 0, full: 100, profile: 0, delay: 0, range: 0 };
       tag.alarm = null;
     } else {
-      if (tag.space === "holding" || tag.space === "input" || tag.space === "d" || tag.space === "w" || tag.space === "r") tag.space = "coil";
+      if (tag.space === "holding" || tag.space === "input" || tag.space === "d" || tag.space === "w" || tag.space === "r" || tag.space === "mw") tag.space = "coil";
       tag.scale = null;
       tag.unit_text = "";
       tag.alarm = null;
@@ -284,12 +284,14 @@
                       <option value="d">d</option>
                       <option value="w">w</option>
                       <option value="r">r</option>
+                      <option value="mw">mw</option>
                     {:else}
                       <option value="coil">coil</option>
                       <option value="discrete">discrete</option>
                       <option value="m">m</option>
                       <option value="x">x</option>
                       <option value="y">y</option>
+                      <option value="mx">mx</option>
                     {/if}
                   </select></label>
                   <label>{m.address} <input type="number" min="0" max="65535" bind:value={tag.address} required /></label>

@@ -22,6 +22,7 @@ use axum::routing::{get, post};
 use nuriscada_driver_api::{BlockData, Driver, DriverError, LinkStatus, ReadBlock};
 use nuriscada_driver_melsec_mc::MelsecMcClient;
 use nuriscada_driver_modbus_tcp::ModbusTcpClient;
+use nuriscada_driver_xgt_fenet::XgtFenetClient;
 use nuriscada_project::{DriverConfig, Project};
 use nuriscada_scheduler::wire::encode_snapshot;
 use nuriscada_scheduler::{Hub, PlanLimits, plan_with, run_device};
@@ -38,8 +39,10 @@ pub mod operations;
 pub enum AnyDriver {
     /// MODBUS TCP.
     ModbusTcp(ModbusTcpClient),
-    /// MELSEC MC(읽기 전용).
+    /// MELSEC MC.
     MelsecMc(MelsecMcClient),
+    /// XGT FEnet(읽기 전용).
+    XgtFenet(XgtFenetClient),
 }
 
 impl Driver for AnyDriver {
@@ -47,6 +50,7 @@ impl Driver for AnyDriver {
         match self {
             Self::ModbusTcp(d) => d.connect().await,
             Self::MelsecMc(d) => d.connect().await,
+            Self::XgtFenet(d) => d.connect().await,
         }
     }
 
@@ -54,6 +58,7 @@ impl Driver for AnyDriver {
         match self {
             Self::ModbusTcp(d) => d.read(block).await,
             Self::MelsecMc(d) => d.read(block).await,
+            Self::XgtFenet(d) => d.read(block).await,
         }
     }
 
@@ -61,6 +66,7 @@ impl Driver for AnyDriver {
         match self {
             Self::ModbusTcp(d) => d.status(),
             Self::MelsecMc(d) => d.status(),
+            Self::XgtFenet(d) => d.status(),
         }
     }
 }
@@ -86,6 +92,7 @@ pub fn start_scanners(project: &Arc<Project>, hub: &Arc<Hub>) -> Scanners {
     let blocks = plan_with(project, |index| match &project.devices[index].driver {
         DriverConfig::ModbusTcp { .. } => PlanLimits::MODBUS,
         DriverConfig::MelsecMc { .. } => PlanLimits::MELSEC_MC,
+        DriverConfig::XgtFenet { .. } => PlanLimits::XGT_FENET,
     });
     let (shutdown, rx) = watch::channel(false);
     let mut tasks = vec![hub.spawn_publisher(project.server.publish, rx.clone())];
@@ -96,6 +103,9 @@ pub fn start_scanners(project: &Arc<Project>, hub: &Arc<Hub>) -> Scanners {
             }
             DriverConfig::MelsecMc { address } => {
                 AnyDriver::MelsecMc(MelsecMcClient::new(address.clone(), device.timeout))
+            }
+            DriverConfig::XgtFenet { address } => {
+                AnyDriver::XgtFenet(XgtFenetClient::new(address.clone(), device.timeout))
             }
         };
         let device_blocks = blocks
