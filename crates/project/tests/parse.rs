@@ -182,8 +182,8 @@ fn melsec_장치와_영역을_받아들인다() {
 }
 
 #[test]
-fn melsec_장치의_쓰기와_영역_혼용을_거부한다() {
-    // d·writable 허용, w·r·m 외 쓰기 거부.
+fn melsec_장치의_쓰기와_영역_혼용을_검사한다() {
+    // d·w·r·m·x·y 쓰기 허용.
     let writable_d = format!(
         "{MELSEC}\n[[tag]]\nname = \"W\"\ndevice = \"plc1\"\nspace = \"d\"\naddress = 1\ntype = \"analog\"\nscale = {{ plc_base = 0, plc_full = 100, base = 0, full = 100 }}\nwritable = true\n"
     );
@@ -204,8 +204,18 @@ space = "w"
 address = 0
 type = "analog"
 scale = { plc_base = 0, plc_full = 100, base = 0, full = 100 }
+
+[[tag]]
+name = "X1"
+writable = true
+device = "plc1"
+space = "x"
+address = 16
+type = "digital"
 "#;
-    assert!(err(writable_w).contains("d·m 영역만"));
+    let p = Project::from_toml(writable_w).unwrap();
+    assert!(p.tags.iter().any(|t| t.name == "W" && t.writable));
+    assert!(p.tags.iter().any(|t| t.name == "X1" && t.writable));
 
     let mixed = MELSEC.replace("space = \"d\"", "space = \"holding\"");
     assert!(err(&mixed).contains("쓸 수 없다"));

@@ -674,9 +674,17 @@ impl Project {
             if t.writable {
                 match &devices[device].driver {
                     DriverConfig::MelsecMc { .. } => {
-                        if !matches!(space, Space::MelsecD | Space::MelsecM) {
+                        if !matches!(
+                            space,
+                            Space::MelsecD
+                                | Space::MelsecW
+                                | Space::MelsecR
+                                | Space::MelsecM
+                                | Space::MelsecX
+                                | Space::MelsecY
+                        ) {
                             return invalid(format!(
-                                "태그 `{}`: MELSEC 쓰기는 d·m 영역만 허용한다",
+                                "태그 `{}`: MELSEC 쓰기는 d·w·r·m·x·y 영역만 허용한다",
                                 t.name
                             ));
                         }
