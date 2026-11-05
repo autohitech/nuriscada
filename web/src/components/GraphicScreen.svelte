@@ -5,6 +5,7 @@
   import { apiErrorMessage } from "../lib/api";
   import { onMount } from "svelte";
   import { formatValue } from "../lib/format";
+  import { UndoStack } from "../lib/undo-stack";
   import type { Store } from "../lib/store.svelte";
   import type {
     GraphicWidgetKind,
@@ -29,41 +30,40 @@
   let snapGrid = $state(true);
   let busy = $state(false);
   let statusMsg = $state("");
-  // 실행 취소·다시 실행 스택: 화면 배열 전체의 스냅샷을 최대 50개까지 둔다.
-  let undoStack = $state<ScreenSpec[][]>([]);
-  let redoStack = $state<ScreenSpec[][]>([]);
-  let staged: ScreenSpec[] | null = null;
+  // 실행 취소·다시 실행: 화면 배열 전체의 스냅샷을 최대 50개까지 둔다.
+  const history = new UndoStack<ScreenSpec[]>(50);
+  let undoDepth = $state(0);
+  let redoDepth = $state(0);
+
+  function syncHistoryDepth(): void {
+    undoDepth = history.undoDepth;
+    redoDepth = history.redoDepth;
+  }
 
   function snapshotScreens(): ScreenSpec[] {
     return $state.snapshot(screens);
   }
 
   function clearHistory(): void {
-    undoStack = [];
-    redoStack = [];
-    staged = null;
+    history.clear();
+    syncHistoryDepth();
   }
 
   /** 변경 직전 상태를 스택에 쌓는다. 같은 편집 제스처에서는 한 번만 쌓이도록 호출 측에서 조절한다. */
   function commit(): void {
-    undoStack.push(snapshotScreens());
-    if (undoStack.length > 50) undoStack.shift();
-    redoStack = [];
-    staged = null;
+    history.commit(snapshotScreens());
+    syncHistoryDepth();
   }
 
   /** 입력 칸에 들어갈 때 변경 전 상태를 잡아 둔다. */
   function stageEdit(): void {
-    staged = snapshotScreens();
+    history.stage(snapshotScreens());
   }
 
   /** 입력 칸의 값이 확정되면 잡아 둔 상태를 스택에 쌓는다. */
   function commitStaged(): void {
-    if (!staged) return;
-    undoStack.push(staged);
-    if (undoStack.length > 50) undoStack.shift();
-    redoStack = [];
-    staged = null;
+    history.commitStaged();
+    syncHistoryDepth();
   }
 
   function restore(list: ScreenSpec[]): void {
@@ -74,23 +74,22 @@
     if (!selectedWidgetId || !ids.has(selectedWidgetId)) {
       selectedWidgetId = screens[activeIndex]?.widget[0]?.id ?? null;
     }
-    staged = null;
   }
 
   function undo(): void {
-    if (!editing || undoStack.length === 0) return;
-    const prev = undoStack.pop();
+    if (!editing) return;
+    const prev = history.undo(snapshotScreens());
     if (!prev) return;
-    redoStack.push(snapshotScreens());
     restore(prev);
+    syncHistoryDepth();
   }
 
   function redo(): void {
-    if (!editing || redoStack.length === 0) return;
-    const next = redoStack.pop();
+    if (!editing) return;
+    const next = history.redo(snapshotScreens());
     if (!next) return;
-    undoStack.push(snapshotScreens());
     restore(next);
+    syncHistoryDepth();
   }
   let dragState = $state<{
     widgetId: string;
@@ -98,6 +97,7 @@
     startClientY: number;
     origX: number;
     origY: number;
+    committed: boolean;
   } | null>(null);
   let svgEl = $state<SVGSVGElement | null>(null);
 
@@ -350,7 +350,6 @@
   function onWidgetPointerDown(event: PointerEvent, w: GraphicWidgetSpec) {
     selectedWidgetId = w.id;
     if (!editing) return;
-    commit();
     event.stopPropagation();
     (event.currentTarget as Element).setPointerCapture?.(event.pointerId);
     dragState = {
@@ -359,6 +358,8 @@
       startClientY: event.clientY,
       origX: w.x,
       origY: w.y,
+      // 클릭만 하고 움직이지 않으면 실행 취소에 쌓지 않는다.
+      committed: false,
     };
   }
 
@@ -367,7 +368,12 @@
     const scr = screens[activeIndex];
     if (!scr) return;
     const w = scr.widget.find((item) => item.id === dragState?.widgetId);
-    if (!w) return;
+    if (!w || !dragState) return;
+    if (!dragState.committed) {
+      if (event.clientX === dragState.startClientX && event.clientY === dragState.startClientY) return;
+      commit();
+      dragState.committed = true;
+    }
     const rect = svgEl.getBoundingClientRect();
     const scaleX = rect.width > 0 ? scr.width / rect.width : 1;
     const scaleY = rect.height > 0 ? scr.height / rect.height : 1;
@@ -435,8 +441,8 @@
           {editing ? m.closeEdit : m.editScreen}
         </button>
         {#if editing}
-          <button type="button" disabled={undoStack.length === 0} onclick={undo} title="Ctrl+Z">{m.undoEdit}</button>
-          <button type="button" disabled={redoStack.length === 0} onclick={redo} title="Ctrl+Shift+Z">{m.redoEdit}</button>
+          <button type="button" disabled={undoDepth === 0} onclick={undo} title="Ctrl+Z">{m.undoEdit}</button>
+          <button type="button" disabled={redoDepth === 0} onclick={redo} title="Ctrl+Shift+Z">{m.redoEdit}</button>
           <button type="button" onclick={addScreen}>{m.addScreenBtn}</button>
           <button type="button" disabled={screens.length <= 1} onclick={removeCurrentScreen}>
             {m.deleteScreen}
