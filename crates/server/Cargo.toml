@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 nuriscada-driver-api = { path = "../driver-api" }
 nuriscada-driver-fins-tcp = { path = "../driver-fins-tcp" }
+nuriscada-driver-s7 = { path = "../driver-s7" }
 nuriscada-driver-melsec-mc = { path = "../driver-melsec-mc" }
 nuriscada-driver-modbus-tcp = { path = "../driver-modbus-tcp" }
 nuriscada-driver-xgt-fenet = { path = "../driver-xgt-fenet" }
@@ -33,6 +34,7 @@ nuriscada-sim-modbus = { path = "../sim-modbus" }
 nuriscada-sim-melsec = { path = "../sim-melsec" }
 nuriscada-sim-xgt = { path = "../sim-xgt" }
 nuriscada-sim-fins = { path = "../sim-fins" }
+nuriscada-sim-s7 = { path = "../sim-s7" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

@@ -74,9 +74,14 @@ pub enum DriverConfig {
         /// `host:port`(기본 2004).
         address: String,
     },
-    /// OMRON FINS/TCP 메모리 영역 읽기.
+    /// OMRON FINS/TCP 메모리 영역 읽기·쓰기.
     FinsTcp {
         /// `host:port`(기본 9600).
+        address: String,
+    },
+    /// Siemens S7 (ISO-on-TCP, 읽기 변수, 읽기 전용).
+    S7Tcp {
+        /// `host:port`(기본 102).
         address: String,
     },
 }
@@ -129,6 +134,10 @@ pub enum Space {
     FinsDm,
     /// CIO 비트(FINS, 비트 번호 = 워드×16 + 비트).
     FinsCio,
+    /// DB 워드(S7, DB 번호 = unit, 바이트 주소).
+    S7Db,
+    /// M 비트(S7, 비트 번호 = 바이트×8 + 비트).
+    S7M,
 }
 
 impl Space {
@@ -141,19 +150,21 @@ impl Space {
             | Self::MelsecX
             | Self::MelsecY
             | Self::XgtMx
-            | Self::FinsCio => DataKind::Bit,
+            | Self::FinsCio
+            | Self::S7M => DataKind::Bit,
             Self::Holding
             | Self::Input
             | Self::MelsecD
             | Self::MelsecW
             | Self::MelsecR
             | Self::XgtMw
-            | Self::FinsDm => DataKind::Word,
+            | Self::FinsDm
+            | Self::S7Db => DataKind::Word,
         }
     }
 
     /// 드라이버 인터페이스의 영역 번호(MODBUS 0~3, MELSEC 10·11·12 워드·20·21·22 비트,
-    /// XGT 30·31, FINS 40·41).
+    /// XGT 30·31, FINS 40·41, S7 50·51).
     pub fn code(self) -> u16 {
         match self {
             Self::Coil => 0,
@@ -170,6 +181,8 @@ impl Space {
             Self::XgtMx => 31,
             Self::FinsDm => 40,
             Self::FinsCio => 41,
+            Self::S7Db => 50,
+            Self::S7M => 51,
         }
     }
 
@@ -190,6 +203,8 @@ impl Space {
             Self::XgtMx => "mx",
             Self::FinsDm => "dm",
             Self::FinsCio => "cio",
+            Self::S7Db => "s7db",
+            Self::S7M => "s7m",
         }
     }
 
@@ -203,6 +218,10 @@ impl Space {
         matches!(self, Self::FinsDm | Self::FinsCio)
     }
 
+    /// S7 장치의 영역인가.
+    pub fn is_s7(self) -> bool {
+        matches!(self, Self::S7Db | Self::S7M)
+    }
     /// MELSEC 장치의 영역인가.
     pub fn is_melsec(self) -> bool {
         matches!(
@@ -512,8 +531,10 @@ fn parse_space(s: &str) -> Result<Space, ConfigError> {
         "mx" => Ok(Space::XgtMx),
         "dm" => Ok(Space::FinsDm),
         "cio" => Ok(Space::FinsCio),
+        "s7db" => Ok(Space::S7Db),
+        "s7m" => Ok(Space::S7M),
         other => invalid(format!(
-            "알 수 없는 영역 `{other}` (coil, discrete, holding, input, d, w, r, m, x, y, mw, mx, dm, cio 중 하나)"
+            "알 수 없는 영역 `{other}` (coil, discrete, holding, input, d, w, r, m, x, y, mw, mx, dm, cio, s7db, s7m 중 하나)"
         )),
     }
 }
@@ -587,9 +608,10 @@ impl Project {
                 "melsec-mc" => DriverConfig::MelsecMc { address: d.address },
                 "xgt-fenet" => DriverConfig::XgtFenet { address: d.address },
                 "fins-tcp" => DriverConfig::FinsTcp { address: d.address },
+                "s7-tcp" => DriverConfig::S7Tcp { address: d.address },
                 other => {
                     return invalid(format!(
-                        "장치 `{}`: 지원하지 않는 드라이버 `{other}` (modbus-tcp, melsec-mc, xgt-fenet, fins-tcp 중 하나)",
+                        "장치 `{}`: 지원하지 않는 드라이버 `{other}` (modbus-tcp, melsec-mc, xgt-fenet, fins-tcp, s7-tcp 중 하나)",
                         d.name
                     ));
                 }
@@ -632,14 +654,16 @@ impl Project {
                 DriverConfig::MelsecMc { .. } => "MELSEC",
                 DriverConfig::XgtFenet { .. } => "XGT",
                 DriverConfig::FinsTcp { .. } => "FINS",
+                DriverConfig::S7Tcp { .. } => "S7",
             };
             let belongs = match &devices[device].driver {
                 DriverConfig::ModbusTcp { .. } => {
-                    !space.is_melsec() && !space.is_xgt() && !space.is_fins()
+                    !space.is_melsec() && !space.is_xgt() && !space.is_fins() && !space.is_s7()
                 }
                 DriverConfig::MelsecMc { .. } => space.is_melsec(),
                 DriverConfig::XgtFenet { .. } => space.is_xgt(),
                 DriverConfig::FinsTcp { .. } => space.is_fins(),
+                DriverConfig::S7Tcp { .. } => space.is_s7(),
             };
             if !belongs {
                 return invalid(format!(
@@ -673,6 +697,12 @@ impl Project {
                             ));
                         }
                     }
+                    DriverConfig::S7Tcp { .. } => {
+                        return invalid(format!(
+                            "태그 `{}`: S7 장치는 읽기 전용이다 (쓰기 미지원)",
+                            t.name
+                        ));
+                    }
                     DriverConfig::ModbusTcp { .. } => {
                         if !matches!(space, Space::Coil | Space::Holding) || t.unit == 0 {
                             return invalid(format!(
@@ -687,7 +717,7 @@ impl Project {
                 "analog" => {
                     if space.kind() != DataKind::Word {
                         return invalid(format!(
-                            "태그 `{}`: 아날로그 태그는 워드 영역(holding·input·d·w·r·mw·dm)이어야 한다",
+                            "태그 `{}`: 아날로그 태그는 워드 영역(holding·input·d·w·r·mw·dm·s7db)이어야 한다",
                             t.name
                         ));
                     }
@@ -735,7 +765,7 @@ impl Project {
                 "digital" => {
                     if space.kind() != DataKind::Bit {
                         return invalid(format!(
-                            "태그 `{}`: 디지털 태그는 비트 영역(coil·discrete·m·x·y·mx·cio)이어야 한다",
+                            "태그 `{}`: 디지털 태그는 비트 영역(coil·discrete·m·x·y·mx·cio·s7m)이어야 한다",
                             t.name
                         ));
                     }
@@ -861,6 +891,7 @@ impl Project {
                         DriverConfig::MelsecMc { address } => ("melsec-mc", address),
                         DriverConfig::XgtFenet { address } => ("xgt-fenet", address),
                         DriverConfig::FinsTcp { address } => ("fins-tcp", address),
+                        DriverConfig::S7Tcp { address } => ("s7-tcp", address),
                     };
                     DeviceSpec {
                         name: d.name.clone(),

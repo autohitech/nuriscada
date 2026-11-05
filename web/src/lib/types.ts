@@ -93,7 +93,7 @@ export interface TagSpec {
   name: string;
   device: string;
   unit: number;
-  space: "coil" | "discrete" | "holding" | "input" | "d" | "w" | "r" | "m" | "x" | "y" | "mw" | "mx" | "dm" | "cio";
+  space: "coil" | "discrete" | "holding" | "input" | "d" | "w" | "r" | "m" | "x" | "y" | "mw" | "mx" | "dm" | "cio" | "s7db" | "s7m";
   address: number;
   type: "analog" | "digital";
   scale: ScaleSpec | null;

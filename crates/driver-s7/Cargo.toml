@@ -1,0 +1,20 @@
+[package]
+name = "nuriscada-driver-s7"
+description = "Siemens S7 (ISO-on-TCP, 읽기 변수 0x04) 읽기 드라이버."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nuriscada-driver-api = { path = "../driver-api" }
+tokio = { workspace = true, features = ["net", "io-util", "time"] }
+
+[dev-dependencies]
+nuriscada-sim-s7 = { path = "../sim-s7" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }

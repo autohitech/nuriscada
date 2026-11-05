@@ -44,6 +44,12 @@ impl PlanLimits {
         max_bits: 128,
         max_gap: 8,
     };
+    /// S7 읽기 변수의 보수적 한도(워드 64, 비트 64)와 빈 주소 8개.
+    pub const S7_TCP: Self = Self {
+        max_words: 64,
+        max_bits: 64,
+        max_gap: 8,
+    };
 }
 
 /// 계획된 읽기 블록과, 그 안에서 값을 가져갈 태그.

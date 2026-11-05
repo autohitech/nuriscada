@@ -305,3 +305,50 @@ fn fins_장치와_영역을_받아들이고_dm_외_쓰기를_거부한다() {
     let mixed = FINS.replace("space = \"dm\"", "space = \"holding\"");
     assert!(err(&mixed).contains("쓸 수 없다"));
 }
+
+const S7: &str = r#"
+[[device]]
+name = "siemens1"
+driver = "s7-tcp"
+address = "127.0.0.1:102"
+timeout_ms = 300
+scan_ms = 100
+
+[[tag]]
+name = "TEMP"
+device = "siemens1"
+unit = 1
+space = "s7db"
+address = 0
+type = "analog"
+unit_text = "℃"
+scale = { plc_base = 0, plc_full = 100, base = 0, full = 100 }
+
+[[tag]]
+name = "RUN"
+device = "siemens1"
+unit = 0
+space = "s7m"
+address = 0
+type = "digital"
+alarm = { kind = 0 }
+"#;
+
+#[test]
+fn s7_장치와_영역을_받아들이고_쓰기를_거부한다() {
+    let p = Project::from_toml(S7).unwrap();
+    assert_eq!(p.devices.len(), 1);
+    assert_eq!(p.tags.len(), 2);
+    assert_eq!(p.tags[0].space, Space::S7Db);
+    assert_eq!(p.tags[1].space, Space::S7M);
+    let reparsed = Project::from_toml(&p.to_toml()).unwrap();
+    assert_eq!(p, reparsed);
+
+    let writable = format!(
+        "{S7}\n[[tag]]\nname = \"W\"\nwritable = true\ndevice = \"siemens1\"\nunit = 1\nspace = \"s7db\"\naddress = 0\ntype = \"analog\"\nscale = {{ plc_base = 0, plc_full = 100, base = 0, full = 100 }}\n"
+    );
+    assert!(err(&writable).contains("읽기 전용"));
+
+    let mixed = S7.replace("space = \"s7db\"", "space = \"holding\"");
+    assert!(err(&mixed).contains("쓸 수 없다"));
+}
