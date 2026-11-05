@@ -7,6 +7,8 @@ members = [
     "crates/driver-modbus-tcp",
     "crates/driver-melsec-mc",
     "crates/scheduler",
+    "crates/driver-xgt-fenet",
+    "crates/sim-xgt",
     "crates/sim-melsec",
     "crates/server",
     "crates/sim-modbus",
