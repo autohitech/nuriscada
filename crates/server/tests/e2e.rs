@@ -586,3 +586,35 @@ type = "digital"
     );
     scanners.stop().await;
 }
+
+#[tokio::test]
+async fn 통신_두절과_복귀가_품질에_드러난다() {
+    let mut st = start().await;
+    let addr = st.addr;
+    // 정상 수신 확인.
+    wait_for(|| async {
+        let doc = json(addr, "/api/v1/tags").await;
+        tag(&doc, "TANK")["quality"] == "good"
+    })
+    .await;
+    // 연결을 끊으면 품질이 bad가 되고 상태에 실패가 쌓인다.
+    st.sim.state().drop_connections = true;
+    wait_for(|| async {
+        let doc = json(addr, "/api/v1/tags").await;
+        tag(&doc, "TANK")["quality"] == "bad"
+    })
+    .await;
+    let status = json(addr, "/api/v1/status").await;
+    assert_eq!(status["devices"][0]["connected"], false);
+    assert!(status["devices"][0]["requests_failed"].as_u64().unwrap() > 0);
+    // 연결이 돌아오면 품질이 good으로 복귀한다.
+    st.sim.state().drop_connections = false;
+    wait_for(|| async {
+        let doc = json(addr, "/api/v1/tags").await;
+        tag(&doc, "TANK")["quality"] == "good"
+    })
+    .await;
+    let status = json(addr, "/api/v1/status").await;
+    assert_eq!(status["devices"][0]["connected"], true);
+    st.scanners.take().unwrap().stop().await;
+}
