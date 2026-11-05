@@ -2,7 +2,7 @@
 // Copyright NuriScada contributors
 
 import { localeTag } from "./i18n.svelte";
-import type { AlarmEvent, AlarmState } from "./types";
+import type { AlarmEvent, AlarmState, ImportReport } from "./types";
 
 export type Severity = "normal" | "warn" | "critical" | "info" | "bad";
 
@@ -58,6 +58,25 @@ export function formatValue(value: number | boolean | string | null, on = "ON", 
   if (typeof value === "string") return value;
   if (Object.is(value, -0)) return numberFormat().format(0);
   return numberFormat().format(value);
+}
+
+/** RFC 4180 인용 규칙으로 한 셀을 감싼다. */
+export function csvCell(text: string): string {
+  if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+/**
+ * 가져오기 보고서를 CSV 텍스트로 만든다(RFC 4180, UTF-8).
+ * 머리글: `section,line,item,detail`. 이름 변경은 `원래이름 -> 바뀐이름` 형태로 `detail`에 둔다.
+ */
+export function formatImportCsv(report: ImportReport): string {
+  const rows = ["section,line,item,detail"];
+  rows.push(...report.renamed_tags.map((r) => ["renamed", String(r.line), r.original, `${r.original} -> ${r.resolved}`].map(csvCell).join(",")));
+  for (const [section, items] of [["modified", report.modified_items], ["ignored", report.ignored_items], ["unreadable", report.unreadable_items]] as const) {
+    rows.push(...items.map((it) => [section, String(it.line), it.item, it.detail].map(csvCell).join(",")));
+  }
+  return rows.join("\r\n") + "\r\n";
 }
 
 // 24시간제 `HH:MM:SS`. 언어와 무관하게 같은 모양으로 보이도록 영국식 로캘을 쓴다.

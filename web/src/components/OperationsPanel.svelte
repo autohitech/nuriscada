@@ -3,7 +3,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { AlarmRecord, DeviceSpec, ImportReport, ProjectSpec, TagHistorySample, TagSpec } from "../lib/types";
-  import { formatDateTime, formatTime } from "../lib/format";
+  import { formatDateTime, formatImportCsv, formatTime } from "../lib/format";
   import { eventLabel, m } from "../lib/i18n.svelte";
   import { apiErrorMessage } from "../lib/api";
   export interface SessionDoc {
@@ -409,6 +409,19 @@
           <label>{m.importDevice} <input bind:value={importDevice} placeholder="sim" /></label>
           <label>{m.importFile} <input type="file" accept=".txt,.csv,.tagx,text/plain" onchange={(e) => void readImportFile((e.currentTarget as HTMLInputElement).files?.[0])} /></label>
           <button type="button" disabled={busy || !importText.trim()} onclick={() => void perform(runImport)}>{m.importRun}</button>
+          {#if importReport}
+            <button type="button" onclick={() => {
+              const report = importReport;
+              if (!report) return;
+              const blob = new Blob(["\uFEFF" + formatImportCsv(report)], { type: "text/csv;charset=utf-8" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "import-report.csv";
+              a.click();
+              URL.revokeObjectURL(url);
+            }}>{m.importCsv}</button>
+          {/if}
         </div>
         <label>{m.importText} <textarea rows="6" bind:value={importText}></textarea></label>
         {#if importReport}

@@ -161,6 +161,7 @@ export const ko = {
   importSummary: (dev: number, tag: number) => `장치 ${dev}개 · 태그 ${tag}개`,
   importApplied: "적용됨",
   importNotApplied: "미적용(미리보기)",
+  importCsv: "CSV 저장",
   unitText: "단위",
   tagString: "문자열",
   useAlarm: "알람 사용",
