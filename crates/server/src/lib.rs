@@ -41,7 +41,7 @@ pub enum AnyDriver {
     ModbusTcp(ModbusTcpClient),
     /// MELSEC MC.
     MelsecMc(MelsecMcClient),
-    /// XGT FEnet(읽기 전용).
+    /// XGT FEnet.
     XgtFenet(XgtFenetClient),
 }
 
