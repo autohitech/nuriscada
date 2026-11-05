@@ -3,7 +3,7 @@
 
 //! 시험용 FINS/TCP 시뮬레이터. 개발·CI 전용이며 배포물에 포함하지 않는다.
 //!
-//! 노드 주소 교환(명령 0/1)과 메모리 영역 읽기(0101, DM 워드·CIO 비트)를 지원한다.
+//! 노드 주소 교환(명령 0/1)과 메모리 영역 읽기(0101, DM 워드·CIO 비트)·쓰기(0102, DM 워드·CIO 비트)를 지원한다.
 //! 실행 중에 메모리 값을 바꾸거나 응답을 늦추고 끊을 수 있어서
 //! 드라이버와 스케줄러의 시험에 쓴다.
 
@@ -216,30 +216,57 @@ fn respond(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// 메모리 영역 쓰기(0102) 요청을 메모리에 반영한다. DM 워드만 지원한다.
+/// 메모리 영역 쓰기(0102) 요청을 메모리에 반영한다. DM 워드와 CIO 비트를 지원한다.
 fn respond_write(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
-    // 쓰기 요청은 읽기보다 값(count×2바이트)이 더 있다.
+    // 쓰기 요청은 읽기보다 값이 더 있다(DM은 count×2바이트, CIO 비트는 count바이트).
     if frame.len() < 16 + 18 {
         return Some(error_response(0x0401, 0x02));
     }
     let body = &frame[16..];
     let area = body[12];
-    if area != 0x82 {
-        return Some(error_response(0x0401, 0x02));
-    }
     let addr = usize::from(u16::from_be_bytes([body[13], body[14]]));
+    let bit = body[15];
     let count = usize::from(u16::from_be_bytes([body[16], body[17]]));
     if count == 0 || count > 128 {
         return Some(error_response(0x0203, 0x02));
     }
-    if frame.len() != 16 + 18 + count * 2 {
-        return Some(error_response(0x0401, 0x02));
-    }
-    if addr + count > state.dm.len() {
-        return Some(error_response(0x0104, 0x02));
-    }
-    for (i, pair) in frame[34..].as_chunks::<2>().0.iter().enumerate() {
-        state.dm[addr + i] = u16::from_be_bytes([pair[0], pair[1]]);
+    match area {
+        0x82 => {
+            if frame.len() != 16 + 18 + count * 2 {
+                return Some(error_response(0x0401, 0x02));
+            }
+            if addr + count > state.dm.len() {
+                return Some(error_response(0x0104, 0x02));
+            }
+            for (i, pair) in frame[34..].as_chunks::<2>().0.iter().enumerate() {
+                state.dm[addr + i] = u16::from_be_bytes([pair[0], pair[1]]);
+            }
+        }
+        0x30 => {
+            if bit > 15 {
+                return Some(error_response(0x0104, 0x02));
+            }
+            if frame.len() != 16 + 18 + count {
+                return Some(error_response(0x0401, 0x02));
+            }
+            let start_bit = addr * 16 + usize::from(bit);
+            if start_bit + count > state.cio.len() * 16 {
+                return Some(error_response(0x0104, 0x02));
+            }
+            for (i, &raw) in frame[34..34 + count].iter().enumerate() {
+                if raw > 1 {
+                    return Some(error_response(0x0203, 0x02));
+                }
+                let total_bit = start_bit + i;
+                let slot = &mut state.cio[total_bit / 16];
+                if raw == 1 {
+                    *slot |= 1 << (total_bit % 16);
+                } else {
+                    *slot &= !(1 << (total_bit % 16));
+                }
+            }
+        }
+        _ => return Some(error_response(0x0401, 0x02)),
     }
     // 응답: 머리 + 에코 10 + 명령 2 + 종료 2.
     let mut out = Vec::with_capacity(16 + 14);

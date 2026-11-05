@@ -287,13 +287,23 @@ pub fn decode_read_response(req: &ReadRequest, frame: &[u8]) -> Result<BlockData
 /// 메모리 영역 쓰기(SRC 02).
 pub const SRC_WRITE: u8 = 0x02;
 
-/// DM 워드 쓰기 요청(시작 주소와 값 목록).
+/// 메모리 영역 쓰기 요청(시작 주소와 값 목록).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WriteRequest {
-    /// 시작 주소.
-    pub start: u16,
-    /// 쓸 워드 값.
-    pub values: Vec<u16>,
+pub enum WriteRequest {
+    /// DM 워드 쓰기.
+    DmWords {
+        /// 시작 주소.
+        start: u16,
+        /// 쓸 워드 값.
+        values: Vec<u16>,
+    },
+    /// CIO 비트 쓰기(비트 번호 = 워드×16 + 비트).
+    CioBits {
+        /// 시작 비트 번호.
+        start_bit: u32,
+        /// 쓸 비트 값.
+        values: Vec<bool>,
+    },
 }
 
 /// 쓰기 요청 전체(TCP 머리 16바이트 + FINS 프레임)를 만든다.
@@ -303,33 +313,60 @@ pub fn encode_write_request(
     sid: u8,
     req: &WriteRequest,
 ) -> Result<Vec<u8>, DriverError> {
-    if req.values.is_empty() || req.values.len() > usize::from(MAX_WORD_ITEMS) {
-        return Err(DriverError::InvalidRequest(format!(
-            "워드 쓰기 개수 {}는 1~{MAX_WORD_ITEMS}이어야 한다",
-            req.values.len()
-        )));
-    }
+    let (area, addr_hi, addr_lo, addr_bit, count) = match req {
+        WriteRequest::DmWords { start, values } => {
+            if values.is_empty() || values.len() > usize::from(MAX_WORD_ITEMS) {
+                return Err(DriverError::InvalidRequest(format!(
+                    "워드 쓰기 개수 {}는 1~{MAX_WORD_ITEMS}이어야 한다",
+                    values.len()
+                )));
+            }
+            (
+                AREA_DM_WORD,
+                (start >> 8) as u8,
+                (start & 0xFF) as u8,
+                0x00,
+                values.len(),
+            )
+        }
+        WriteRequest::CioBits { start_bit, values } => {
+            if values.is_empty() || values.len() > usize::from(MAX_WORD_ITEMS) {
+                return Err(DriverError::InvalidRequest(format!(
+                    "비트 쓰기 개수 {}는 1~{MAX_WORD_ITEMS}이어야 한다",
+                    values.len()
+                )));
+            }
+            let word = start_bit / 16;
+            if word > u32::from(u16::MAX) {
+                return Err(DriverError::InvalidRequest(format!(
+                    "비트 번호 {start_bit}가 범위를 벗어났다"
+                )));
+            }
+            (
+                AREA_CIO_BIT,
+                (word >> 8) as u8,
+                (word & 0xFF) as u8,
+                (start_bit % 16) as u8,
+                values.len(),
+            )
+        }
+    };
     let mut inner = vec![
-        0x80,
-        0x00,
-        0x02,
-        0x00,
-        server,
-        0x00,
-        0x00,
-        client,
-        0x00,
-        sid,
-        MRC_MEMORY,
-        SRC_WRITE,
-        AREA_DM_WORD,
-        (req.start >> 8) as u8,
-        (req.start & 0xFF) as u8,
-        0x00,
+        0x80, 0x00, 0x02, 0x00, server, 0x00, 0x00, client, 0x00, sid, MRC_MEMORY, SRC_WRITE, area,
+        addr_hi, addr_lo, addr_bit,
     ];
-    inner.extend_from_slice(&(req.values.len() as u16).to_be_bytes());
-    for v in &req.values {
-        inner.extend_from_slice(&v.to_be_bytes());
+    inner.extend_from_slice(&(count as u16).to_be_bytes());
+    match req {
+        WriteRequest::DmWords { values, .. } => {
+            for v in values {
+                inner.extend_from_slice(&v.to_be_bytes());
+            }
+        }
+        WriteRequest::CioBits { values, .. } => {
+            for v in values {
+                inner.push(u8::from(*v));
+            }
+        }
     }
     let mut out = Vec::with_capacity(TCP_HEADER_LEN + inner.len());
     out.extend_from_slice(&MAGIC);
@@ -461,6 +498,26 @@ mod tests {
     }
 
     #[test]
+    fn cio_비트_쓰기_요청_인코딩() {
+        // CIO 워드 1 bit 3(= 비트 번호 19)부터 2개: 값 0x01·0x00.
+        let req = WriteRequest::CioBits {
+            start_bit: 19,
+            values: vec![true, false],
+        };
+        let frame = encode_write_request(0xFB, 0x0F, 1, &req).unwrap();
+        assert_eq!(frame[28..34], [0x30, 0x00, 0x01, 0x03, 0x00, 0x02]);
+        assert_eq!(frame[34..36], [0x01, 0x00]);
+        // DM 쓰기 모양은 그대로다(D20 = 0x1234).
+        let dm = WriteRequest::DmWords {
+            start: 20,
+            values: vec![0x1234],
+        };
+        let dm_frame = encode_write_request(0xFB, 0x0F, 1, &dm).unwrap();
+        assert_eq!(dm_frame[28..32], [0x82, 0x00, 0x14, 0x00]);
+        assert_eq!(dm_frame[34..36], [0x12, 0x34]);
+    }
+
+    #[test]
     fn 개수_0은_거부한다() {
         let req = ReadRequest::DmWords { start: 0, count: 0 };
         assert!(matches!(
@@ -517,7 +574,7 @@ mod write_tests {
 
     #[test]
     fn dm_쓰기_요청_인코딩() {
-        let req = WriteRequest {
+        let req = WriteRequest::DmWords {
             start: 20,
             values: vec![0x1234, 0x5678],
         };
@@ -541,7 +598,7 @@ mod write_tests {
 
     #[test]
     fn 빈_쓰기는_거부한다() {
-        let req = WriteRequest {
+        let req = WriteRequest::DmWords {
             start: 0,
             values: vec![],
         };

@@ -98,7 +98,7 @@ impl FinsTcpClient {
         decode_write_response(&frame)
     }
 
-    /// 단일 DM 워드를 쓴다. `unit`은 무시한다.
+    /// 단일 값을 쓴다. DM은 워드, CIO는 비트(값 0/1)이다. `unit`은 무시한다.
     /// 불명확한 결과를 자동 재시도하지 않는다.
     pub async fn write_single(
         &mut self,
@@ -107,14 +107,27 @@ impl FinsTcpClient {
         address: u16,
         value: u16,
     ) -> Result<(), DriverError> {
-        if space != SPACE_DM {
-            return Err(DriverError::InvalidRequest(format!(
-                "쓰기는 DM 영역만 지원한다: {space}"
-            )));
-        }
-        let req = WriteRequest {
-            start: address,
-            values: vec![value],
+        let req = match space {
+            SPACE_DM => WriteRequest::DmWords {
+                start: address,
+                values: vec![value],
+            },
+            SPACE_CIO => {
+                if value > 1 {
+                    return Err(DriverError::InvalidRequest(format!(
+                        "CIO 비트 값 {value}는 0 또는 1이어야 한다"
+                    )));
+                }
+                WriteRequest::CioBits {
+                    start_bit: u32::from(address),
+                    values: vec![value == 1],
+                }
+            }
+            _ => {
+                return Err(DriverError::InvalidRequest(format!(
+                    "쓰기를 지원하지 않는 영역이다: {space}"
+                )));
+            }
         };
         self.sid = self.sid.wrapping_add(1);
         let frame = encode_write_request(self.client_node, self.server_node, self.sid, &req)?;

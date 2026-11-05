@@ -297,7 +297,8 @@ alarm = { kind = 0 }
 "#;
 
 #[test]
-fn fins_장치와_영역을_받아들이고_dm_외_쓰기를_거부한다() {
+fn fins_장치의_쓰기와_영역_혼용을_검사한다() {
+    // dm·cio 쓰기 허용.
     let p = Project::from_toml(FINS).unwrap();
     assert_eq!(p.devices.len(), 1);
     assert_eq!(p.tags.len(), 2);
@@ -307,10 +308,11 @@ fn fins_장치와_영역을_받아들이고_dm_외_쓰기를_거부한다() {
     assert_eq!(p, reparsed);
 
     let writable = format!(
-        "{FINS}\n[[tag]]\nname = \"W\"\ndevice = \"omron1\"\nspace = \"dm\"\naddress = 1\ntype = \"analog\"\nscale = {{ plc_base = 0, plc_full = 100, base = 0, full = 100 }}\nwritable = true\n"
+        "{FINS}\n[[tag]]\nname = \"W\"\ndevice = \"omron1\"\nspace = \"dm\"\naddress = 1\ntype = \"analog\"\nscale = {{ plc_base = 0, plc_full = 100, base = 0, full = 100 }}\nwritable = true\n\n[[tag]]\nname = \"C1\"\ndevice = \"omron1\"\nspace = \"cio\"\naddress = 19\ntype = \"digital\"\nwritable = true\n"
     );
     let p = Project::from_toml(&writable).unwrap();
     assert!(p.tags.iter().any(|t| t.name == "W" && t.writable));
+    assert!(p.tags.iter().any(|t| t.name == "C1" && t.writable));
 
     let mixed = FINS.replace("space = \"dm\"", "space = \"holding\"");
     assert!(err(&mixed).contains("쓸 수 없다"));

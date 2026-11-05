@@ -167,12 +167,14 @@ async fn 단일_dm_쓰기_후_읽힌다() {
 #[tokio::test]
 async fn 지원하지_않는_영역_쓰기는_거부한다() {
     let (_sim, mut client) = setup().await;
-    assert!(matches!(
-        client.write_single(0, SPACE_CIO, 0, 1).await,
-        Err(DriverError::InvalidRequest(_))
-    ));
+    // 존재하지 않는 영역 번호는 거부한다.
     assert!(matches!(
         client.write_single(0, 999, 0, 1).await,
+        Err(DriverError::InvalidRequest(_))
+    ));
+    // CIO 비트 값은 0 또는 1이어야 한다.
+    assert!(matches!(
+        client.write_single(0, SPACE_CIO, 0, 2).await,
         Err(DriverError::InvalidRequest(_))
     ));
 }
@@ -184,4 +186,28 @@ async fn 범위를_벗어난_쓰기는_장치_오류다() {
         client.write_single(0, SPACE_DM, 300, 1).await,
         Err(DriverError::Device { .. })
     ));
+}
+
+#[tokio::test]
+async fn 단일_cio_쓰기_후_읽힌다() {
+    let (sim, mut client) = setup().await;
+    // CIO 비트 19(= 워드 1 bit 3)를 켰다 끈다.
+    client.write_single(0, SPACE_CIO, 19, 1).await.unwrap();
+    assert_eq!(
+        client
+            .read(&block(SPACE_CIO, 19, 1, DataKind::Bit))
+            .await
+            .unwrap(),
+        BlockData::Bits(vec![true])
+    );
+    assert_eq!(sim.state().cio[1] & 0x0008, 0x0008);
+    client.write_single(0, SPACE_CIO, 19, 0).await.unwrap();
+    assert_eq!(
+        client
+            .read(&block(SPACE_CIO, 19, 1, DataKind::Bit))
+            .await
+            .unwrap(),
+        BlockData::Bits(vec![false])
+    );
+    assert_eq!(sim.state().cio[1] & 0x0008, 0);
 }

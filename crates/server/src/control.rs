@@ -636,9 +636,12 @@ pub(super) async fn write_tag(
         .cloned()
         .ok_or_else(|| error(StatusCode::NOT_FOUND, Code::WriteTagNotWritable))?;
     let raw = match tag.space {
-        Space::Coil | Space::MelsecM | Space::MelsecX | Space::MelsecY | Space::XgtMx => {
-            input.value.as_bool().map(u16::from)
-        }
+        Space::Coil
+        | Space::MelsecM
+        | Space::MelsecX
+        | Space::MelsecY
+        | Space::XgtMx
+        | Space::FinsCio => input.value.as_bool().map(u16::from),
         Space::Holding
         | Space::MelsecD
         | Space::MelsecW
