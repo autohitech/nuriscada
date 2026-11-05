@@ -2,7 +2,7 @@
 <!-- Copyright NuriScada contributors -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { AlarmRecord, DeviceSpec, ProjectSpec, TagHistorySample, TagSpec } from "../lib/types";
+  import type { AlarmRecord, DeviceSpec, ImportReport, ProjectSpec, TagHistorySample, TagSpec } from "../lib/types";
   import { formatDateTime, formatTime } from "../lib/format";
   import { eventLabel, m } from "../lib/i18n.svelte";
   import { apiErrorMessage } from "../lib/api";
@@ -34,6 +34,12 @@
   let trendSamples = $state<TagHistorySample[]>([]);
   let projectSpec = $state<ProjectSpec | null>(null);
   let projectToml = $state("");
+  let importFormat = $state("simple");
+  let importMode = $state("preview");
+  let importDevice = $state("");
+  let importText = $state("");
+  let importReport = $state<ImportReport | null>(null);
+  let importApplied = $state(false);
   let stopped = false;
 
   const trendStats = $derived.by(() => {
@@ -153,6 +159,27 @@
     message = m.projectSaved;
   }
 
+  async function runImport() {
+    const body: Record<string, unknown> = {
+      text: importText,
+      mode: importMode,
+      format: importFormat,
+    };
+    if (importDevice.trim()) body.default_device = importDevice.trim();
+    const res = await request("project/import", body) as { ok: boolean; applied: boolean; report: ImportReport };
+    importReport = res.report;
+    importApplied = res.applied;
+    if (res.applied) {
+      projectSpec = null;
+      await loadProject();
+      await refresh();
+    }
+  }
+
+  async function readImportFile(file: File | undefined) {
+    if (!file) return;
+    importText = await file.text();
+  }
   async function refresh() {
     try {
       const data = await request("auth/session") as SessionDoc;
@@ -365,6 +392,52 @@
               </details>
             {/if}
           </div>
+        {/if}
+      </details>
+      <details>
+        <summary>{m.importHeading}</summary>
+        <div class="inline">
+          <label>{m.importFormat} <select bind:value={importFormat}>
+            <option value="simple">{m.importSimple}</option>
+            <option value="tagx">{m.importTagx}</option>
+          </select></label>
+          <label>{m.importMode} <select bind:value={importMode}>
+            <option value="preview">{m.importPreview}</option>
+            <option value="merge">{m.importMerge}</option>
+            <option value="replace">{m.importReplace}</option>
+          </select></label>
+          <label>{m.importDevice} <input bind:value={importDevice} placeholder="sim" /></label>
+          <label>{m.importFile} <input type="file" accept=".txt,.csv,.tagx,text/plain" onchange={(e) => void readImportFile((e.currentTarget as HTMLInputElement).files?.[0])} /></label>
+          <button type="button" disabled={busy || !importText.trim()} onclick={() => void perform(runImport)}>{m.importRun}</button>
+        </div>
+        <label>{m.importText} <textarea rows="6" bind:value={importText}></textarea></label>
+        {#if importReport}
+          <p>{m.importSummary(importReport.imported_devices, importReport.imported_tags)} · {importApplied ? m.importApplied : m.importNotApplied}</p>
+          {#if importReport.renamed_tags.length > 0}
+            <details>
+              <summary>renamed ({importReport.renamed_tags.length})</summary>
+              <ul>
+                {#each importReport.renamed_tags as it}
+                  <li>{it.line}: {it.original} → {it.resolved}</li>
+                {/each}
+              </ul>
+            </details>
+          {/if}
+          {#if importReport.modified_items.length > 0}
+            <details><summary>modified ({importReport.modified_items.length})</summary><ul>
+              {#each importReport.modified_items as it}<li>{it.line}: {it.item} — {it.detail}</li>{/each}
+            </ul></details>
+          {/if}
+          {#if importReport.ignored_items.length > 0}
+            <details><summary>ignored ({importReport.ignored_items.length})</summary><ul>
+              {#each importReport.ignored_items as it}<li>{it.line}: {it.item} — {it.detail}</li>{/each}
+            </ul></details>
+          {/if}
+          {#if importReport.unreadable_items.length > 0}
+            <details><summary>unreadable ({importReport.unreadable_items.length})</summary><ul>
+              {#each importReport.unreadable_items as it}<li>{it.line}: {it.item} — {it.detail}</li>{/each}
+            </ul></details>
+          {/if}
         {/if}
       </details>
       <details>
