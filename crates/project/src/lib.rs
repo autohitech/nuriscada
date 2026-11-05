@@ -74,6 +74,11 @@ pub enum DriverConfig {
         /// `host:port`(기본 2004).
         address: String,
     },
+    /// OMRON FINS/TCP 메모리 영역 읽기.
+    FinsTcp {
+        /// `host:port`(기본 9600).
+        address: String,
+    },
 }
 
 /// 장치.
@@ -90,8 +95,10 @@ pub struct Device {
 }
 
 /// 메모리 영역. MODBUS 영역(coil·discrete·holding·input)과
-/// MELSEC 영역(d·w·r 워드, m·x·y 비트), XGT 영역(mw 워드, mx 비트)을 함께 쓴다.
-/// MELSEC X·Y 주소는 16진 장치 번호다(X10 = 0x10). XGT 주소는 10진 번호다.
+/// MELSEC 영역(d·w·r 워드, m·x·y 비트), XGT 영역(mw 워드, mx 비트),
+/// FINS 영역(dm 워드, cio 비트)을 함께 쓴다.
+/// MELSEC X·Y 주소는 16진 장치 번호다(X10 = 0x10). XGT·FINS 주소는 10진 번호다.
+/// FINS cio 주소는 비트 번호다(워드×16 + 비트).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Space {
     /// 코일(MODBUS).
@@ -118,6 +125,10 @@ pub enum Space {
     XgtMw,
     /// %MX 비트(XGT, 10진 번호).
     XgtMx,
+    /// DM 워드(FINS).
+    FinsDm,
+    /// CIO 비트(FINS, 비트 번호 = 워드×16 + 비트).
+    FinsCio,
 }
 
 impl Space {
@@ -129,17 +140,20 @@ impl Space {
             | Self::MelsecM
             | Self::MelsecX
             | Self::MelsecY
-            | Self::XgtMx => DataKind::Bit,
+            | Self::XgtMx
+            | Self::FinsCio => DataKind::Bit,
             Self::Holding
             | Self::Input
             | Self::MelsecD
             | Self::MelsecW
             | Self::MelsecR
-            | Self::XgtMw => DataKind::Word,
+            | Self::XgtMw
+            | Self::FinsDm => DataKind::Word,
         }
     }
 
-    /// 드라이버 인터페이스의 영역 번호(MODBUS 0~3, MELSEC 10~12 워드·20~22 비트).
+    /// 드라이버 인터페이스의 영역 번호(MODBUS 0~3, MELSEC 10·11·12 워드·20·21·22 비트,
+    /// XGT 30·31, FINS 40·41).
     pub fn code(self) -> u16 {
         match self {
             Self::Coil => 0,
@@ -154,6 +168,8 @@ impl Space {
             Self::MelsecY => 22,
             Self::XgtMw => 30,
             Self::XgtMx => 31,
+            Self::FinsDm => 40,
+            Self::FinsCio => 41,
         }
     }
 
@@ -172,12 +188,19 @@ impl Space {
             Self::MelsecY => "y",
             Self::XgtMw => "mw",
             Self::XgtMx => "mx",
+            Self::FinsDm => "dm",
+            Self::FinsCio => "cio",
         }
     }
 
     /// XGT 장치의 영역인가.
     pub fn is_xgt(self) -> bool {
         matches!(self, Self::XgtMw | Self::XgtMx)
+    }
+
+    /// FINS 장치의 영역인가.
+    pub fn is_fins(self) -> bool {
+        matches!(self, Self::FinsDm | Self::FinsCio)
     }
 
     /// MELSEC 장치의 영역인가.
@@ -487,8 +510,10 @@ fn parse_space(s: &str) -> Result<Space, ConfigError> {
         "y" => Ok(Space::MelsecY),
         "mw" => Ok(Space::XgtMw),
         "mx" => Ok(Space::XgtMx),
+        "dm" => Ok(Space::FinsDm),
+        "cio" => Ok(Space::FinsCio),
         other => invalid(format!(
-            "알 수 없는 영역 `{other}` (coil, discrete, holding, input, d, w, r, m, x, y, mw, mx 중 하나)"
+            "알 수 없는 영역 `{other}` (coil, discrete, holding, input, d, w, r, m, x, y, mw, mx, dm, cio 중 하나)"
         )),
     }
 }
@@ -561,9 +586,10 @@ impl Project {
                 "modbus-tcp" => DriverConfig::ModbusTcp { address: d.address },
                 "melsec-mc" => DriverConfig::MelsecMc { address: d.address },
                 "xgt-fenet" => DriverConfig::XgtFenet { address: d.address },
+                "fins-tcp" => DriverConfig::FinsTcp { address: d.address },
                 other => {
                     return invalid(format!(
-                        "장치 `{}`: 지원하지 않는 드라이버 `{other}` (modbus-tcp, melsec-mc, xgt-fenet 중 하나)",
+                        "장치 `{}`: 지원하지 않는 드라이버 `{other}` (modbus-tcp, melsec-mc, xgt-fenet, fins-tcp 중 하나)",
                         d.name
                     ));
                 }
@@ -605,11 +631,15 @@ impl Project {
                 DriverConfig::ModbusTcp { .. } => "MODBUS",
                 DriverConfig::MelsecMc { .. } => "MELSEC",
                 DriverConfig::XgtFenet { .. } => "XGT",
+                DriverConfig::FinsTcp { .. } => "FINS",
             };
             let belongs = match &devices[device].driver {
-                DriverConfig::ModbusTcp { .. } => !space.is_melsec() && !space.is_xgt(),
+                DriverConfig::ModbusTcp { .. } => {
+                    !space.is_melsec() && !space.is_xgt() && !space.is_fins()
+                }
                 DriverConfig::MelsecMc { .. } => space.is_melsec(),
                 DriverConfig::XgtFenet { .. } => space.is_xgt(),
+                DriverConfig::FinsTcp { .. } => space.is_fins(),
             };
             if !belongs {
                 return invalid(format!(
@@ -635,6 +665,12 @@ impl Project {
                             ));
                         }
                     }
+                    DriverConfig::FinsTcp { .. } => {
+                        return invalid(format!(
+                            "태그 `{}`: FINS 장치는 읽기 전용이다 (쓰기 미지원)",
+                            t.name
+                        ));
+                    }
                     DriverConfig::ModbusTcp { .. } => {
                         if !matches!(space, Space::Coil | Space::Holding) || t.unit == 0 {
                             return invalid(format!(
@@ -649,7 +685,7 @@ impl Project {
                 "analog" => {
                     if space.kind() != DataKind::Word {
                         return invalid(format!(
-                            "태그 `{}`: 아날로그 태그는 워드 영역(holding·input·d·w·r·mw)이어야 한다",
+                            "태그 `{}`: 아날로그 태그는 워드 영역(holding·input·d·w·r·mw·dm)이어야 한다",
                             t.name
                         ));
                     }
@@ -697,7 +733,7 @@ impl Project {
                 "digital" => {
                     if space.kind() != DataKind::Bit {
                         return invalid(format!(
-                            "태그 `{}`: 디지털 태그는 비트 영역(coil·discrete·m·x·y·mx)이어야 한다",
+                            "태그 `{}`: 디지털 태그는 비트 영역(coil·discrete·m·x·y·mx·cio)이어야 한다",
                             t.name
                         ));
                     }
@@ -822,6 +858,7 @@ impl Project {
                         DriverConfig::ModbusTcp { address } => ("modbus-tcp", address),
                         DriverConfig::MelsecMc { address } => ("melsec-mc", address),
                         DriverConfig::XgtFenet { address } => ("xgt-fenet", address),
+                        DriverConfig::FinsTcp { address } => ("fins-tcp", address),
                     };
                     DeviceSpec {
                         name: d.name.clone(),

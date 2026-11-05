@@ -1,0 +1,33 @@
+# FINS 시연용 프로젝트: `nuriscada-sim-fins --demo`와 함께 쓴다.
+#   cargo run -p nuriscada-sim-fins -- --demo
+#   cargo run -p nuriscada-server -- --config examples/demo-fins.toml --init-admin admin
+#   cargo run -p nuriscada-server -- --config examples/demo-fins.toml --enable-writes
+# FINS 장치는 읽기 전용이다. cio 주소는 비트 번호다(워드×16 + 비트, CIO 1.00 = 16).
+
+[server]
+listen = "127.0.0.1:8083"
+
+[[device]]
+name = "omron1"
+driver = "fins-tcp"
+address = "127.0.0.1:9600"
+timeout_ms = 500
+scan_ms = 100
+
+[[tag]]
+name = "DRYER_TEMP"
+device = "omron1"
+space = "dm"
+address = 20
+type = "analog"
+unit_text = "℃"
+scale = { plc_base = 0, plc_full = 100, base = 0, full = 100 }
+alarm = { kind = 6, hihi = 90, high = 70, low = 30, lolo = 10, gap = 5 }
+
+[[tag]]
+name = "DRYER_RUN"
+device = "omron1"
+space = "cio"
+address = 16
+type = "digital"
+alarm = { kind = 0 }

@@ -38,6 +38,12 @@ impl PlanLimits {
         max_bits: 16,
         max_gap: 0,
     };
+    /// FINS 메모리 영역 읽기의 보수적 한도(워드 128, 비트 128)와 빈 주소 8개.
+    pub const FINS_TCP: Self = Self {
+        max_words: 128,
+        max_bits: 128,
+        max_gap: 8,
+    };
 }
 
 /// 계획된 읽기 블록과, 그 안에서 값을 가져갈 태그.

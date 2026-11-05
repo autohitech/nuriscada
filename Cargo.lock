@@ -471,6 +471,15 @@ name = "nuriscada-driver-api"
 version = "0.1.0-alpha.1"
 
 [[package]]
+name = "nuriscada-driver-fins-tcp"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "nuriscada-driver-api",
+ "nuriscada-sim-fins",
+ "tokio",
+]
+
+[[package]]
 name = "nuriscada-driver-melsec-mc"
 version = "0.1.0-alpha.1"
 dependencies = [
@@ -529,11 +538,13 @@ dependencies = [
  "futures-util",
  "getrandom",
  "nuriscada-driver-api",
+ "nuriscada-driver-fins-tcp",
  "nuriscada-driver-melsec-mc",
  "nuriscada-driver-modbus-tcp",
  "nuriscada-driver-xgt-fenet",
  "nuriscada-project",
  "nuriscada-scheduler",
+ "nuriscada-sim-fins",
  "nuriscada-sim-melsec",
  "nuriscada-sim-modbus",
  "nuriscada-sim-xgt",
@@ -544,6 +555,13 @@ dependencies = [
  "sha2",
  "tokio",
  "tokio-tungstenite",
+]
+
+[[package]]
+name = "nuriscada-sim-fins"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "tokio",
 ]
 
 [[package]]

@@ -20,6 +20,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use nuriscada_driver_api::{BlockData, Driver, DriverError, LinkStatus, ReadBlock};
+use nuriscada_driver_fins_tcp::FinsTcpClient;
 use nuriscada_driver_melsec_mc::MelsecMcClient;
 use nuriscada_driver_modbus_tcp::ModbusTcpClient;
 use nuriscada_driver_xgt_fenet::XgtFenetClient;
@@ -43,6 +44,8 @@ pub enum AnyDriver {
     MelsecMc(MelsecMcClient),
     /// XGT FEnet.
     XgtFenet(XgtFenetClient),
+    /// FINS/TCP(읽기 전용).
+    FinsTcp(FinsTcpClient),
 }
 
 impl Driver for AnyDriver {
@@ -51,6 +54,7 @@ impl Driver for AnyDriver {
             Self::ModbusTcp(d) => d.connect().await,
             Self::MelsecMc(d) => d.connect().await,
             Self::XgtFenet(d) => d.connect().await,
+            Self::FinsTcp(d) => d.connect().await,
         }
     }
 
@@ -59,6 +63,7 @@ impl Driver for AnyDriver {
             Self::ModbusTcp(d) => d.read(block).await,
             Self::MelsecMc(d) => d.read(block).await,
             Self::XgtFenet(d) => d.read(block).await,
+            Self::FinsTcp(d) => d.read(block).await,
         }
     }
 
@@ -67,6 +72,7 @@ impl Driver for AnyDriver {
             Self::ModbusTcp(d) => d.status(),
             Self::MelsecMc(d) => d.status(),
             Self::XgtFenet(d) => d.status(),
+            Self::FinsTcp(d) => d.status(),
         }
     }
 }
@@ -93,6 +99,7 @@ pub fn start_scanners(project: &Arc<Project>, hub: &Arc<Hub>) -> Scanners {
         DriverConfig::ModbusTcp { .. } => PlanLimits::MODBUS,
         DriverConfig::MelsecMc { .. } => PlanLimits::MELSEC_MC,
         DriverConfig::XgtFenet { .. } => PlanLimits::XGT_FENET,
+        DriverConfig::FinsTcp { .. } => PlanLimits::FINS_TCP,
     });
     let (shutdown, rx) = watch::channel(false);
     let mut tasks = vec![hub.spawn_publisher(project.server.publish, rx.clone())];
@@ -106,6 +113,9 @@ pub fn start_scanners(project: &Arc<Project>, hub: &Arc<Hub>) -> Scanners {
             }
             DriverConfig::XgtFenet { address } => {
                 AnyDriver::XgtFenet(XgtFenetClient::new(address.clone(), device.timeout))
+            }
+            DriverConfig::FinsTcp { address } => {
+                AnyDriver::FinsTcp(FinsTcpClient::new(address.clone(), device.timeout))
             }
         };
         let device_blocks = blocks
