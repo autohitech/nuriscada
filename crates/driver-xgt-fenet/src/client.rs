@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright NuriScada contributors
 
-//! XGT 전용 프로토콜(FEnet) 개별 읽기 클라이언트.
+//! XGT 전용 프로토콜(FEnet) 개별 읽기·쓰기 클라이언트.
 
 use std::time::{Duration, Instant};
 
@@ -11,8 +11,8 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 use crate::protocol::{
-    HEADER_LEN, ReadRequest, Variable, decode_read_response, encode_read_request,
-    remaining_after_header,
+    HEADER_LEN, ReadRequest, Variable, WriteRequest, decode_read_response, decode_write_response,
+    encode_read_request, encode_write_request, remaining_after_header,
 };
 
 /// %MW 워드 영역 번호.
@@ -80,6 +80,87 @@ impl XgtFenetClient {
             .await
             .map_err(|e| DriverError::Connection(e.to_string()))?;
         decode_read_response(req, &frame)
+    }
+
+    async fn exchange_write(stream: &mut TcpStream, request: &[u8]) -> Result<(), DriverError> {
+        stream
+            .write_all(request)
+            .await
+            .map_err(|e| DriverError::Connection(e.to_string()))?;
+        let mut header = [0u8; HEADER_LEN];
+        stream
+            .read_exact(&mut header)
+            .await
+            .map_err(|e| DriverError::Connection(e.to_string()))?;
+        let rest = remaining_after_header(&header)?;
+        let mut frame = vec![0u8; HEADER_LEN + rest];
+        frame[..HEADER_LEN].copy_from_slice(&header);
+        stream
+            .read_exact(&mut frame[HEADER_LEN..])
+            .await
+            .map_err(|e| DriverError::Connection(e.to_string()))?;
+        decode_write_response(&frame)
+    }
+
+    /// 단일 %MW 워드 또는 %MX 비트를 쓴다. `unit`은 무시한다.
+    /// 불명확한 결과를 자동 재시도하지 않는다.
+    pub async fn write_single(
+        &mut self,
+        _unit: u8,
+        space: u16,
+        address: u16,
+        value: u16,
+    ) -> Result<(), DriverError> {
+        let (prefix, is_word) = prefix_for(space).ok_or_else(|| {
+            DriverError::InvalidRequest(format!("지원하지 않는 영역 번호: {space}"))
+        })?;
+        if (is_word && space != SPACE_MW) || (!is_word && space != SPACE_MX) {
+            return Err(DriverError::InvalidRequest(format!(
+                "쓰기는 MW·MX 영역만 지원한다: {space}"
+            )));
+        }
+        let name = format!("%{prefix}{}", u32::from(address)).into_bytes();
+        let req = if is_word {
+            WriteRequest::Words {
+                names: vec![name],
+                values: vec![value],
+            }
+        } else {
+            WriteRequest::Bits {
+                names: vec![name],
+                values: vec![value != 0],
+            }
+        };
+        self.invoke = self.invoke.wrapping_add(1);
+        let frame = encode_write_request(self.invoke, &req)?;
+
+        let started = Instant::now();
+        let result = async {
+            self.connect().await?;
+            let stream = self.stream.as_mut().expect("방금 연결했다");
+            timeout(self.timeout, Self::exchange_write(stream, &frame))
+                .await
+                .map_err(|_| DriverError::Timeout)?
+        }
+        .await;
+
+        match &result {
+            Ok(()) => {
+                self.status.requests_ok += 1;
+                self.status.last_round_trip = Some(started.elapsed());
+            }
+            Err(e) => {
+                self.status.requests_failed += 1;
+                // 장치가 오류를 응답한 경우 연결은 정상이다. 그 밖의 오류는 연결을 버린다.
+                if !matches!(
+                    e,
+                    DriverError::Device { .. } | DriverError::InvalidRequest(_)
+                ) {
+                    self.drop_connection();
+                }
+            }
+        }
+        result
     }
 }
 

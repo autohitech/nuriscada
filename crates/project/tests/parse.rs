@@ -241,7 +241,7 @@ alarm = { kind = 0 }
 "#;
 
 #[test]
-fn xgt_장치와_영역을_받아들이고_쓰기를_거부한다() {
+fn xgt_장치와_영역을_받아들이고_mw_외_쓰기를_거부한다() {
     let p = Project::from_toml(XGT).unwrap();
     assert_eq!(p.devices.len(), 1);
     assert_eq!(p.tags.len(), 2);
@@ -253,7 +253,8 @@ fn xgt_장치와_영역을_받아들이고_쓰기를_거부한다() {
     let writable = format!(
         "{XGT}\n[[tag]]\nname = \"W\"\ndevice = \"xgt1\"\nspace = \"mw\"\naddress = 1\ntype = \"analog\"\nscale = {{ plc_base = 0, plc_full = 100, base = 0, full = 100 }}\nwritable = true\n"
     );
-    assert!(err(&writable).contains("읽기 전용"));
+    let p = Project::from_toml(&writable).unwrap();
+    assert!(p.tags.iter().any(|t| t.name == "W" && t.writable));
 
     let mixed = XGT.replace("space = \"mw\"", "space = \"holding\"");
     assert!(err(&mixed).contains("쓸 수 없다"));

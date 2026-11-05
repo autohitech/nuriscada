@@ -101,8 +101,8 @@ impl Drop for Simulator {
 const COMPANY: [u8; 10] = [0x4C, 0x53, 0x49, 0x53, 0x2D, 0x58, 0x47, 0x54, 0x00, 0x00];
 
 /// 오류 응답(명령 에코+오류 상태, 블록 없음)을 만든다.
-fn error_response(invoke: u16, dtype: u16, error: u16) -> Vec<u8> {
-    let body = [0x55, 0x00];
+fn error_response(invoke: u16, cmd: [u8; 2], dtype: u16, error: u16) -> Vec<u8> {
+    let body = cmd;
     let mut out = Vec::with_capacity(30);
     out.extend_from_slice(&COMPANY);
     out.extend_from_slice(&[0x00, 0x00]);
@@ -140,39 +140,42 @@ fn parse_name(name: &[u8]) -> Option<(bool, usize)> {
 /// 요청 프레임에 대한 응답을 만든다. 응답하지 않으면 `None`이다.
 fn respond(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
     if frame.len() < 28 || frame[..8] != COMPANY[..8] || frame[13] != 0x33 {
-        return Some(error_response(0, 0x0002, 0x0001));
+        return Some(error_response(0, [0x55, 0x00], 0x0002, 0x0001));
     }
     let invoke = u16::from_le_bytes([frame[14], frame[15]]);
     let cmd = u16::from_le_bytes([frame[20], frame[21]]);
+    if cmd == 0x0058 {
+        return respond_write(frame, invoke, state);
+    }
     if cmd != 0x0054 {
-        return Some(error_response(invoke, 0x0002, 0x0001));
+        return Some(error_response(invoke, [0x55, 0x00], 0x0002, 0x0001));
     }
     let dtype = u16::from_le_bytes([frame[22], frame[23]]);
     let is_word = match dtype {
         0x0002 => true,
         0x0000 => false,
-        _ => return Some(error_response(invoke, dtype, 0x0001)),
+        _ => return Some(error_response(invoke, [0x55, 0x00], dtype, 0x0001)),
     };
     let blocks = usize::from(u16::from_le_bytes([frame[26], frame[27]]));
     if blocks == 0 || blocks > 16 {
-        return Some(error_response(invoke, dtype, 0x0001));
+        return Some(error_response(invoke, [0x55, 0x00], dtype, 0x0001));
     }
     // 블록 목록을 읽는다.
     let mut pos = 28;
     let mut vars = Vec::with_capacity(blocks);
     for _ in 0..blocks {
         if pos + 2 > frame.len() {
-            return Some(error_response(invoke, dtype, 0x0001));
+            return Some(error_response(invoke, [0x55, 0x00], dtype, 0x0001));
         }
         let len = usize::from(u16::from_le_bytes([frame[pos], frame[pos + 1]]));
         pos += 2;
         if len == 0 || len > 16 || pos + len > frame.len() {
-            return Some(error_response(invoke, dtype, 0x0001));
+            return Some(error_response(invoke, [0x55, 0x00], dtype, 0x0001));
         }
         let (w, num) = parse_name(&frame[pos..pos + len])?;
         pos += len;
         if w != is_word {
-            return Some(error_response(invoke, dtype, 0x0001));
+            return Some(error_response(invoke, [0x55, 0x00], dtype, 0x0001));
         }
         vars.push(num);
     }
@@ -181,7 +184,7 @@ fn respond(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
     if is_word {
         for &num in &vars {
             let Some(&v) = state.mw.get(num) else {
-                return Some(error_response(invoke, dtype, 0x0011));
+                return Some(error_response(invoke, [0x55, 0x00], dtype, 0x0011));
             };
             data.extend_from_slice(&2u16.to_le_bytes());
             data.extend_from_slice(&v.to_le_bytes());
@@ -189,7 +192,7 @@ fn respond(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
     } else {
         for &num in &vars {
             let Some(&b) = state.mx.get(num) else {
-                return Some(error_response(invoke, dtype, 0x0011));
+                return Some(error_response(invoke, [0x55, 0x00], dtype, 0x0011));
             };
             data.extend_from_slice(&1u16.to_le_bytes());
             data.push(u8::from(b));
@@ -212,6 +215,87 @@ fn respond(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
     out.extend_from_slice(&0u16.to_le_bytes());
     out.extend_from_slice(&(vars.len() as u16).to_le_bytes());
     out.extend_from_slice(&data);
+    Some(out)
+}
+
+/// 개별 쓰기(0x5800) 요청을 메모리에 반영한다. 성공하면 오류 상태 0 응답을 만든다.
+fn respond_write(frame: &[u8], invoke: u16, state: &mut State) -> Option<Vec<u8>> {
+    let dtype = u16::from_le_bytes([frame[22], frame[23]]);
+    let is_word = match dtype {
+        0x0002 => true,
+        0x0000 => false,
+        _ => return Some(error_response(invoke, [0x59, 0x00], dtype, 0x0001)),
+    };
+    let blocks = usize::from(u16::from_le_bytes([frame[26], frame[27]]));
+    if blocks == 0 || blocks > 16 {
+        return Some(error_response(invoke, [0x59, 0x00], dtype, 0x0001));
+    }
+    let mut pos = 28;
+    let mut updates: Vec<(usize, u16, bool)> = Vec::with_capacity(blocks);
+    for _ in 0..blocks {
+        if pos + 2 > frame.len() {
+            return Some(error_response(invoke, [0x59, 0x00], dtype, 0x0001));
+        }
+        let len = usize::from(u16::from_le_bytes([frame[pos], frame[pos + 1]]));
+        pos += 2;
+        if len == 0 || len > 16 || pos + len > frame.len() {
+            return Some(error_response(invoke, [0x59, 0x00], dtype, 0x0001));
+        }
+        let (w, num) = parse_name(&frame[pos..pos + len])?;
+        pos += len;
+        if w != is_word {
+            return Some(error_response(invoke, [0x59, 0x00], dtype, 0x0001));
+        }
+        if pos + 2 > frame.len() {
+            return Some(error_response(invoke, [0x59, 0x00], dtype, 0x0001));
+        }
+        let count = usize::from(u16::from_le_bytes([frame[pos], frame[pos + 1]]));
+        pos += 2;
+        if is_word {
+            if count != 2 || pos + 2 > frame.len() {
+                return Some(error_response(invoke, [0x59, 0x00], dtype, 0x0001));
+            }
+            let v = u16::from_le_bytes([frame[pos], frame[pos + 1]]);
+            pos += 2;
+            updates.push((num, v, false));
+        } else {
+            if count != 1 || pos + 1 > frame.len() {
+                return Some(error_response(invoke, [0x59, 0x00], dtype, 0x0001));
+            }
+            updates.push((num, 0, frame[pos] != 0));
+            pos += 1;
+        }
+    }
+    // 전부 검증한 뒤에 반영한다.
+    for (num, v, b) in updates {
+        if is_word {
+            let Some(slot) = state.mw.get_mut(num) else {
+                return Some(error_response(invoke, [0x59, 0x00], dtype, 0x0011));
+            };
+            *slot = v;
+        } else {
+            let Some(slot) = state.mx.get_mut(num) else {
+                return Some(error_response(invoke, [0x59, 0x00], dtype, 0x0011));
+            };
+            *slot = b;
+        }
+    }
+    // 응답: 머리 + 0x5900 + 종류 + 예약 + 오류 0 + 블록 0.
+    let body_len = 2 + 2 + 2 + 2 + 2;
+    let mut out = Vec::with_capacity(20 + body_len);
+    out.extend_from_slice(&COMPANY);
+    out.extend_from_slice(&[0x00, 0x00]);
+    out.push(0xA0);
+    out.push(0x11);
+    out.extend_from_slice(&invoke.to_le_bytes());
+    out.extend_from_slice(&(body_len as u16).to_le_bytes());
+    out.push(0x00);
+    out.push(0x00);
+    out.extend_from_slice(&[0x59, 0x00]);
+    out.extend_from_slice(&dtype.to_le_bytes());
+    out.extend_from_slice(&[0x00, 0x00]);
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
     Some(out)
 }
 
@@ -322,5 +406,58 @@ mod tests {
         s.read_exact(&mut body).await.unwrap();
         assert_eq!(&body[6..8], &[0x11, 0x00]);
         assert_eq!(sim.state().requests_served, 3);
+    }
+}
+
+#[cfg(test)]
+mod write_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn 개별_쓰기가_메모리에_반영된다() {
+        let sim = Simulator::start("127.0.0.1:0", 200, 64).await.unwrap();
+        let mut s = TcpStream::connect(sim.addr()).await.unwrap();
+        // %MW10에 0x1234 쓰기.
+        let mut body = vec![0x58, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00];
+        body.extend_from_slice(&[0x05, 0x00]);
+        body.extend_from_slice(b"%MW10");
+        body.extend_from_slice(&[0x02, 0x00, 0x34, 0x12]);
+        let mut req = vec![
+            0x4C, 0x53, 0x49, 0x53, 0x2D, 0x58, 0x47, 0x54, 0x00, 0x00, 0x00, 0x00, 0xA0, 0x33,
+            0x00, 0x00,
+        ];
+        req.extend_from_slice(&(body.len() as u16).to_le_bytes());
+        req.extend_from_slice(&[0x00, 0x00]);
+        req.extend_from_slice(&body);
+        s.write_all(&req).await.unwrap();
+        let mut head = [0u8; 20];
+        s.read_exact(&mut head).await.unwrap();
+        let len = usize::from(u16::from_le_bytes([head[16], head[17]]));
+        let mut resp = vec![0u8; len];
+        s.read_exact(&mut resp).await.unwrap();
+        assert_eq!(
+            &resp[..8],
+            &[0x59, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
+        assert_eq!(sim.state().mw[10], 0x1234);
+        // %MX0에 true 쓰기.
+        let mut body = vec![0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00];
+        body.extend_from_slice(&[0x04, 0x00]);
+        body.extend_from_slice(b"%MX0");
+        body.extend_from_slice(&[0x01, 0x00, 0x01]);
+        let mut req = vec![
+            0x4C, 0x53, 0x49, 0x53, 0x2D, 0x58, 0x47, 0x54, 0x00, 0x00, 0x00, 0x00, 0xA0, 0x33,
+            0x00, 0x00,
+        ];
+        req.extend_from_slice(&(body.len() as u16).to_le_bytes());
+        req.extend_from_slice(&[0x00, 0x00]);
+        req.extend_from_slice(&body);
+        s.write_all(&req).await.unwrap();
+        s.read_exact(&mut head).await.unwrap();
+        let len = usize::from(u16::from_le_bytes([head[16], head[17]]));
+        let mut resp = vec![0u8; len];
+        s.read_exact(&mut resp).await.unwrap();
+        assert_eq!(&resp[6..8], &[0x00, 0x00]);
+        assert!(sim.state().mx[0]);
     }
 }

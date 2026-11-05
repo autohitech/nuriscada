@@ -69,7 +69,7 @@ pub enum DriverConfig {
         /// `host:port`(기본 5007).
         address: String,
     },
-    /// XGT 전용 프로토콜(FEnet, 읽기 전용).
+    /// XGT 전용 프로토콜(FEnet, 개별 읽기·쓰기).
     XgtFenet {
         /// `host:port`(기본 2004).
         address: String,
@@ -628,10 +628,12 @@ impl Project {
                         }
                     }
                     DriverConfig::XgtFenet { .. } => {
-                        return invalid(format!(
-                            "태그 `{}`: XGT 장치는 읽기 전용이다 (쓰기 미지원)",
-                            t.name
-                        ));
+                        if !matches!(space, Space::XgtMw | Space::XgtMx) {
+                            return invalid(format!(
+                                "태그 `{}`: XGT 쓰기는 mw·mx 영역만 허용한다",
+                                t.name
+                            ));
+                        }
                     }
                     DriverConfig::ModbusTcp { .. } => {
                         if !matches!(space, Space::Coil | Space::Holding) || t.unit == 0 {

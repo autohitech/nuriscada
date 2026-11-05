@@ -17,6 +17,7 @@ use axum::{
 use nuriscada_driver_api::DataKind;
 use nuriscada_driver_melsec_mc::MelsecMcClient;
 use nuriscada_driver_modbus_tcp::ModbusTcpClient;
+use nuriscada_driver_xgt_fenet::XgtFenetClient;
 use nuriscada_project::{DriverConfig, Space};
 use nuriscada_scheduler::{Quality, now_ms};
 use serde::Deserialize;
@@ -634,8 +635,10 @@ pub(super) async fn write_tag(
         .cloned()
         .ok_or_else(|| error(StatusCode::NOT_FOUND, Code::WriteTagNotWritable))?;
     let raw = match tag.space {
-        Space::Coil | Space::MelsecM => input.value.as_bool().map(u16::from),
-        Space::Holding | Space::MelsecD => input.value.as_u64().and_then(|v| u16::try_from(v).ok()),
+        Space::Coil | Space::MelsecM | Space::XgtMx => input.value.as_bool().map(u16::from),
+        Space::Holding | Space::MelsecD | Space::XgtMw => {
+            input.value.as_u64().and_then(|v| u16::try_from(v).ok())
+        }
         _ => None,
     }
     .ok_or_else(|| error(StatusCode::BAD_REQUEST, Code::WriteBadValue))?;
@@ -670,9 +673,11 @@ pub(super) async fn write_tag(
                 .write_single(tag.unit, tag.space.code(), tag.address, raw)
                 .await
         }
-        DriverConfig::XgtFenet { .. } => {
-            // 검증에서 XGT 태그의 쓰기를 이미 거부하므로 여기에는 닿지 않는다.
-            return Err(error(StatusCode::NOT_FOUND, Code::WriteTagNotWritable));
+        DriverConfig::XgtFenet { address } => {
+            let mut driver = XgtFenetClient::new(address.clone(), device.timeout);
+            driver
+                .write_single(tag.unit, tag.space.code(), tag.address, raw)
+                .await
         }
     };
     let detail = match &outcome {
