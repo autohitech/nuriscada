@@ -15,6 +15,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use nuriscada_driver_api::DataKind;
+use nuriscada_driver_fins_tcp::FinsTcpClient;
 use nuriscada_driver_melsec_mc::MelsecMcClient;
 use nuriscada_driver_modbus_tcp::ModbusTcpClient;
 use nuriscada_driver_xgt_fenet::XgtFenetClient;
@@ -636,7 +637,7 @@ pub(super) async fn write_tag(
         .ok_or_else(|| error(StatusCode::NOT_FOUND, Code::WriteTagNotWritable))?;
     let raw = match tag.space {
         Space::Coil | Space::MelsecM | Space::XgtMx => input.value.as_bool().map(u16::from),
-        Space::Holding | Space::MelsecD | Space::XgtMw => {
+        Space::Holding | Space::MelsecD | Space::XgtMw | Space::FinsDm => {
             input.value.as_u64().and_then(|v| u16::try_from(v).ok())
         }
         _ => None,
@@ -679,9 +680,11 @@ pub(super) async fn write_tag(
                 .write_single(tag.unit, tag.space.code(), tag.address, raw)
                 .await
         }
-        DriverConfig::FinsTcp { .. } => {
-            // 검증에서 FINS 태그의 쓰기를 이미 거부하므로 여기에는 닿지 않는다.
-            return Err(error(StatusCode::NOT_FOUND, Code::WriteTagNotWritable));
+        DriverConfig::FinsTcp { address } => {
+            let mut driver = FinsTcpClient::new(address.clone(), device.timeout);
+            driver
+                .write_single(tag.unit, tag.space.code(), tag.address, raw)
+                .await
         }
     };
     let detail = match &outcome {

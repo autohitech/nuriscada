@@ -284,6 +284,116 @@ pub fn decode_read_response(req: &ReadRequest, frame: &[u8]) -> Result<BlockData
     }
 }
 
+/// 메모리 영역 쓰기(SRC 02).
+pub const SRC_WRITE: u8 = 0x02;
+
+/// DM 워드 쓰기 요청(시작 주소와 값 목록).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteRequest {
+    /// 시작 주소.
+    pub start: u16,
+    /// 쓸 워드 값.
+    pub values: Vec<u16>,
+}
+
+/// 쓰기 요청 전체(TCP 머리 16바이트 + FINS 프레임)를 만든다.
+pub fn encode_write_request(
+    client: u8,
+    server: u8,
+    sid: u8,
+    req: &WriteRequest,
+) -> Result<Vec<u8>, DriverError> {
+    if req.values.is_empty() || req.values.len() > usize::from(MAX_WORD_ITEMS) {
+        return Err(DriverError::InvalidRequest(format!(
+            "워드 쓰기 개수 {}는 1~{MAX_WORD_ITEMS}이어야 한다",
+            req.values.len()
+        )));
+    }
+    let mut inner = vec![
+        0x80,
+        0x00,
+        0x02,
+        0x00,
+        server,
+        0x00,
+        0x00,
+        client,
+        0x00,
+        sid,
+        MRC_MEMORY,
+        SRC_WRITE,
+        AREA_DM_WORD,
+        (req.start >> 8) as u8,
+        (req.start & 0xFF) as u8,
+        0x00,
+    ];
+    inner.extend_from_slice(&(req.values.len() as u16).to_be_bytes());
+    for v in &req.values {
+        inner.extend_from_slice(&v.to_be_bytes());
+    }
+    let mut out = Vec::with_capacity(TCP_HEADER_LEN + inner.len());
+    out.extend_from_slice(&MAGIC);
+    out.extend_from_slice(&(8u32 + inner.len() as u32).to_be_bytes());
+    out.extend_from_slice(&CMD_FINS.to_be_bytes());
+    out.extend_from_slice(&0u32.to_be_bytes());
+    out.extend_from_slice(&inner);
+    Ok(out)
+}
+
+/// 쓰기 응답 프레임(머리 포함)을 해석한다. 오류 상태만 본다.
+pub fn decode_write_response(frame: &[u8]) -> Result<(), DriverError> {
+    if frame.len() < TCP_HEADER_LEN + 14 {
+        return Err(DriverError::Protocol(format!(
+            "응답이 너무 짧다: {}",
+            frame.len()
+        )));
+    }
+    let (header, mut body) = frame.split_at(TCP_HEADER_LEN);
+    if header[..4] != MAGIC {
+        return Err(DriverError::Protocol("매직이 FINS가 아니다".into()));
+    }
+    let take = |body: &mut &[u8], n: usize| -> Result<Vec<u8>, DriverError> {
+        if body.len() < n {
+            return Err(DriverError::Protocol(format!(
+                "본문이 짧다: {} < {n}",
+                body.len()
+            )));
+        }
+        let (head, rest) = body.split_at(n);
+        *body = rest;
+        Ok(head.to_vec())
+    };
+    let icf = take(&mut body, 1)?[0];
+    if icf != 0xC0 {
+        return Err(DriverError::Protocol(format!(
+            "응답 ICF가 0xC0이 아니다: {icf:02X}"
+        )));
+    }
+    let _echo = take(&mut body, 9)?;
+    let mrc = take(&mut body, 1)?[0];
+    let src = take(&mut body, 1)?[0];
+    if mrc != MRC_MEMORY || src != SRC_WRITE {
+        return Err(DriverError::Protocol(format!(
+            "응답 명령이 0102가 아니다: {mrc:02X}{src:02X}"
+        )));
+    }
+    // 쓰기 응답은 데이터 없이 종료 코드만 있다(에코 10 + 명령 2 + 종료 2).
+    if body.len() != 2 {
+        return Err(DriverError::Protocol(format!(
+            "쓰기 응답 길이가 맞지 않다: {}",
+            body.len() + 12
+        )));
+    }
+    let end = u16::from_be_bytes([body[0], body[1]]);
+    if end != 0 {
+        return Err(DriverError::Device {
+            code: (end & 0xFF) as u8,
+            text: format!("FINS {}", end_code_text(end)),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,5 +508,62 @@ mod tests {
             decode_read_response(&req, &frame).unwrap(),
             BlockData::Bits(vec![true, false])
         );
+    }
+}
+
+#[cfg(test)]
+mod write_tests {
+    use super::*;
+
+    #[test]
+    fn dm_쓰기_요청_인코딩() {
+        let req = WriteRequest {
+            start: 20,
+            values: vec![0x1234, 0x5678],
+        };
+        let frame = encode_write_request(0xFB, 0x0F, 1, &req).unwrap();
+        assert_eq!(
+            frame,
+            vec![
+                0x46, 0x49, 0x4E, 0x53, // 매직
+                0x00, 0x00, 0x00, 0x1E, // 길이 30
+                0x00, 0x00, 0x00, 0x02, // 명령 2
+                0x00, 0x00, 0x00, 0x00, // 오류 0
+                0x80, 0x00, 0x02, 0x00, 0x0F, 0x00, 0x00, 0xFB, 0x00, 0x01, // 머리+SID
+                0x01, 0x02, // 0102
+                0x82, // DM 워드
+                0x00, 0x14, 0x00, // D20
+                0x00, 0x02, // 2개
+                0x12, 0x34, 0x56, 0x78, // 값
+            ]
+        );
+    }
+
+    #[test]
+    fn 빈_쓰기는_거부한다() {
+        let req = WriteRequest {
+            start: 0,
+            values: vec![],
+        };
+        assert!(matches!(
+            encode_write_request(0xFB, 0x0F, 1, &req),
+            Err(DriverError::InvalidRequest(_))
+        ));
+    }
+
+    #[test]
+    fn 쓰기_응답은_종료_상태만_본다() {
+        let ok = vec![
+            0x46, 0x49, 0x4E, 0x53, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
+            0x00, 0x00, 0xC0, 0x00, 0x02, 0x00, 0x0F, 0x00, 0x00, 0xFB, 0x00, 0x01, 0x01, 0x02,
+            0x00, 0x00,
+        ];
+        assert!(decode_write_response(&ok).is_ok());
+        let mut bad = ok.clone();
+        bad[28] = 0x01;
+        bad[29] = 0x04;
+        let err = decode_write_response(&bad).unwrap_err();
+        assert!(matches!(err, DriverError::Device { .. }));
+        assert!(err.to_string().contains("0104"));
     }
 }

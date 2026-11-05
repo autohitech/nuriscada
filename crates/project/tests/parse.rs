@@ -287,7 +287,7 @@ alarm = { kind = 0 }
 "#;
 
 #[test]
-fn fins_장치와_영역을_받아들이고_쓰기를_거부한다() {
+fn fins_장치와_영역을_받아들이고_dm_외_쓰기를_거부한다() {
     let p = Project::from_toml(FINS).unwrap();
     assert_eq!(p.devices.len(), 1);
     assert_eq!(p.tags.len(), 2);
@@ -299,7 +299,8 @@ fn fins_장치와_영역을_받아들이고_쓰기를_거부한다() {
     let writable = format!(
         "{FINS}\n[[tag]]\nname = \"W\"\ndevice = \"omron1\"\nspace = \"dm\"\naddress = 1\ntype = \"analog\"\nscale = {{ plc_base = 0, plc_full = 100, base = 0, full = 100 }}\nwritable = true\n"
     );
-    assert!(err(&writable).contains("읽기 전용"));
+    let p = Project::from_toml(&writable).unwrap();
+    assert!(p.tags.iter().any(|t| t.name == "W" && t.writable));
 
     let mixed = FINS.replace("space = \"dm\"", "space = \"holding\"");
     assert!(err(&mixed).contains("쓸 수 없다"));

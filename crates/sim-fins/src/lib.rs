@@ -103,7 +103,7 @@ const SERVER_NODE: u8 = 0x0F;
 const CLIENT_NODE: u8 = 0xFB;
 
 /// FINS 오류 응답(명령 2, 빈 본문, 종료 코드)을 만든다.
-fn error_response(end: u16) -> Vec<u8> {
+fn error_response(end: u16, src: u8) -> Vec<u8> {
     // 오류 응답도 에코 10 + 명령 2 + 종료 2를 담는다.
     let mut out = Vec::with_capacity(30);
     out.extend_from_slice(&MAGIC);
@@ -123,7 +123,7 @@ fn error_response(end: u16) -> Vec<u8> {
         0x01,
     ];
     out.extend_from_slice(&echo);
-    out.extend_from_slice(&[0x01, 0x01]);
+    out.extend_from_slice(&[0x01, src]);
     out.extend_from_slice(&end.to_be_bytes());
     out
 }
@@ -146,25 +146,31 @@ fn respond(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
         return Some(out);
     }
     if cmd != 2 || frame.len() < 16 + 18 {
-        return Some(error_response(0x0401));
+        return Some(error_response(0x0401, 0x01));
     }
     let body = &frame[16..];
-    if body[0] != 0x80 || body[10] != 0x01 || body[11] != 0x01 {
-        return Some(error_response(0x0401));
+    if body[0] != 0x80 || body[10] != 0x01 {
+        return Some(error_response(0x0401, 0x01));
+    }
+    if body[11] == 0x02 {
+        return respond_write(frame, state);
+    }
+    if body[11] != 0x01 {
+        return Some(error_response(0x0401, 0x01));
     }
     let area = body[12];
     let addr = u16::from_be_bytes([body[13], body[14]]);
     let bit = body[15];
     let count = usize::from(u16::from_be_bytes([body[16], body[17]]));
     if count == 0 || count > 128 {
-        return Some(error_response(0x0203));
+        return Some(error_response(0x0203, 0x01));
     }
     // 데이터를 읽는다.
     let mut data = Vec::with_capacity(count * 2);
     match area {
         0x82 => {
             if usize::from(addr) + count > state.dm.len() {
-                return Some(error_response(0x0104));
+                return Some(error_response(0x0104, 0x01));
             }
             for &v in &state.dm[usize::from(addr)..usize::from(addr) + count] {
                 data.extend_from_slice(&v.to_be_bytes());
@@ -172,7 +178,7 @@ fn respond(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
         }
         0x30 => {
             if bit > 15 {
-                return Some(error_response(0x0104));
+                return Some(error_response(0x0104, 0x01));
             }
             for i in 0..count {
                 // 비트 읽기는 시작 비트에서 count개 순차 비트를 읽는다.
@@ -182,7 +188,7 @@ fn respond(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
                 data.extend_from_slice(&(u16::from(on)).to_be_bytes());
             }
         }
-        _ => return Some(error_response(0x0401)),
+        _ => return Some(error_response(0x0401, 0x01)),
     }
     let mut out = Vec::with_capacity(16 + 22 + data.len());
     out.extend_from_slice(&MAGIC);
@@ -206,6 +212,55 @@ fn respond(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
     out.extend_from_slice(&echo);
     out.extend_from_slice(&[0x01, 0x01]);
     out.extend_from_slice(&data);
+    out.extend_from_slice(&0u16.to_be_bytes());
+    Some(out)
+}
+
+/// 메모리 영역 쓰기(0102) 요청을 메모리에 반영한다. DM 워드만 지원한다.
+fn respond_write(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
+    // 쓰기 요청은 읽기보다 값(count×2바이트)이 더 있다.
+    if frame.len() < 16 + 18 {
+        return Some(error_response(0x0401, 0x02));
+    }
+    let body = &frame[16..];
+    let area = body[12];
+    if area != 0x82 {
+        return Some(error_response(0x0401, 0x02));
+    }
+    let addr = usize::from(u16::from_be_bytes([body[13], body[14]]));
+    let count = usize::from(u16::from_be_bytes([body[16], body[17]]));
+    if count == 0 || count > 128 {
+        return Some(error_response(0x0203, 0x02));
+    }
+    if frame.len() != 16 + 18 + count * 2 {
+        return Some(error_response(0x0401, 0x02));
+    }
+    if addr + count > state.dm.len() {
+        return Some(error_response(0x0104, 0x02));
+    }
+    for (i, pair) in frame[34..].as_chunks::<2>().0.iter().enumerate() {
+        state.dm[addr + i] = u16::from_be_bytes([pair[0], pair[1]]);
+    }
+    // 응답: 머리 + 에코 10 + 명령 2 + 종료 2.
+    let mut out = Vec::with_capacity(16 + 14);
+    out.extend_from_slice(&MAGIC);
+    out.extend_from_slice(&22u32.to_be_bytes());
+    out.extend_from_slice(&2u32.to_be_bytes());
+    out.extend_from_slice(&0u32.to_be_bytes());
+    let echo = [
+        0xC0,
+        0x00,
+        0x02,
+        0x00,
+        SERVER_NODE,
+        0x00,
+        0x00,
+        CLIENT_NODE,
+        0x00,
+        body[9],
+    ];
+    out.extend_from_slice(&echo);
+    out.extend_from_slice(&[0x01, 0x02]);
     out.extend_from_slice(&0u16.to_be_bytes());
     Some(out)
 }
@@ -338,5 +393,62 @@ mod tests {
         let resp = read_response(&mut s).await;
         assert_eq!(&resp[resp.len() - 2..], &[0x01, 0x04]);
         assert_eq!(sim.state().requests_served, 4);
+    }
+
+    #[tokio::test]
+    async fn 영역_쓰기가_메모리에_반영된다() {
+        let sim = Simulator::start("127.0.0.1:0", 300, 64).await.unwrap();
+        let mut s = TcpStream::connect(sim.addr()).await.unwrap();
+        handshake(&mut s).await;
+        // D20에 0x1234, 0x5678 쓰기.
+        let body = vec![
+            0x80,
+            0x00,
+            0x02,
+            0x00,
+            SERVER_NODE,
+            0x00,
+            0x00,
+            CLIENT_NODE,
+            0x00,
+            0x01,
+            0x01,
+            0x02,
+            0x82,
+            0x00,
+            0x14,
+            0x00,
+            0x00,
+            0x02,
+            0x12,
+            0x34,
+            0x56,
+            0x78,
+        ];
+        let mut req = vec![
+            0x46, 0x49, 0x4E, 0x53, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+        req[4..8].copy_from_slice(&(8 + body.len() as u32).to_be_bytes());
+        req.extend_from_slice(&body);
+        s.write_all(&req).await.unwrap();
+        let resp = read_response(&mut s).await;
+        assert_eq!(&resp[resp.len() - 2..], &[0x00, 0x00]);
+        assert_eq!(sim.state().dm[20], 0x1234);
+        assert_eq!(sim.state().dm[21], 0x5678);
+        // 범위 밖 D299 쓰기 → 0104.
+        let mut body = body.clone();
+        body[13] = 0x01;
+        body[14] = 0x2B;
+        let mut req = vec![
+            0x46, 0x49, 0x4E, 0x53, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+        req[4..8].copy_from_slice(&(8 + body.len() as u32).to_be_bytes());
+        req.extend_from_slice(&body);
+        s.write_all(&req).await.unwrap();
+        let resp = read_response(&mut s).await;
+        assert_eq!(&resp[resp.len() - 2..], &[0x01, 0x04]);
+        assert_eq!(sim.state().requests_served, 3);
     }
 }
