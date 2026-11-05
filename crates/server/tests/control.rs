@@ -129,8 +129,12 @@ writable=true
 }
 
 async fn login(st: &Stack, name: &str) -> String {
+    login_at(st.addr, st.ops.public_read_only, name).await
+}
+
+async fn login_at(addr: SocketAddr, public_read_only: bool, name: &str) -> String {
     let (code, headers, _) = request(
-        st.addr,
+        addr,
         "POST",
         "/api/v1/auth/login",
         "",
@@ -142,7 +146,7 @@ async fn login(st: &Stack, name: &str) -> String {
     assert!(headers.to_lowercase().contains("httponly"));
     assert!(headers.to_lowercase().contains("samesite=strict"));
     assert!(headers.to_lowercase().contains("cache-control: no-store"));
-    if st.ops.public_read_only {
+    if public_read_only {
         assert!(headers.to_lowercase().contains("; secure"));
     }
     headers
@@ -1110,4 +1114,196 @@ scale={{plc_base=0,plc_full=100,base=0,full=100}}
     .await;
     assert_eq!(code, 200, "{body}");
     assert_eq!(sim.state().dm[20], 321);
+}
+
+#[tokio::test]
+async fn fins_cio_쓰기가_장치에_닿는다() {
+    use nuriscada_sim_fins::Simulator as FinsSim;
+    let sim = FinsSim::start("127.0.0.1:0", 300, 64).await.unwrap();
+    let project = Arc::new(
+        Project::from_toml(&format!(
+            r#"
+[[device]]
+name="omron1"
+driver="fins-tcp"
+address="{}"
+scan_ms=20
+[[tag]]
+name="FAN"
+device="omron1"
+space="cio"
+address=19
+type="digital"
+writable=true
+"#,
+            sim.addr()
+        ))
+        .unwrap(),
+    );
+    let ops = Operations::open_with_mode(
+        std::path::Path::new(":memory:"),
+        project.clone(),
+        true,
+        false,
+    )
+    .unwrap();
+    ops.create_user("operator", PASSWORD, Role::Operator, false, "cli", "cli")
+        .unwrap();
+    let hub = Hub::new(&project);
+    let archive = ops.start_archive(hub.clone());
+    let scanners = start_scanners(&project, &hub);
+    ops.attach_scanners(scanners).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router_with_operations(hub, addr, None, ops.clone());
+    let _task = tokio::spawn(async move {
+        let _archive = archive;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let cookie = login_at(addr, false, "operator").await;
+    // 첫 스캔이 품질을 Good으로 올릴 때까지 기다린다.
+    for _ in 0..50 {
+        let (_, _, tags) = request(addr, "GET", "/api/v1/tags", &cookie, json!({}), "")
+            .await;
+        let good = tags["tags"]
+            .as_array()
+            .map(|ts| {
+                ts.iter().all(|t| t.get("quality").and_then(|q| q.as_str()) == Some("good"))
+            })
+            .unwrap_or(false);
+        if good {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/FAN",
+        &cookie,
+        json!({"value": true}),
+        "X-NuriScada-Request: 1\r\n",
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(sim.state().cio[1] & 0x0008, 0x0008);
+    // 비트가 아닌 값은 거부한다.
+    let (code, _, _) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/FAN",
+        &cookie,
+        json!({"value": 2}),
+        "X-NuriScada-Request: 1\r\n",
+    )
+    .await;
+    assert_eq!(code, 400);
+}
+
+#[tokio::test]
+async fn s7_쓰기가_장치에_닿고_감사에_남는다() {
+    use nuriscada_sim_s7::Simulator as S7Sim;
+    let sim = S7Sim::start("127.0.0.1:0").await.unwrap();
+    sim.set_db(1, 0, &vec![0; 11]);
+    sim.set_m(0, &vec![false; 84]);
+    let project = Arc::new(
+        Project::from_toml(&format!(
+            r#"
+[[device]]
+name="siemens1"
+driver="s7-tcp"
+address="{}"
+scan_ms=20
+[[tag]]
+name="SETPOINT"
+device="siemens1"
+unit=1
+space="s7db"
+address=10
+type="analog"
+writable=true
+scale={{plc_base=0,plc_full=100,base=0,full=100}}
+[[tag]]
+name="RUN"
+device="siemens1"
+unit=0
+space="s7m"
+address=83
+type="digital"
+writable=true
+"#,
+            sim.addr()
+        ))
+        .unwrap(),
+    );
+    let ops = Operations::open_with_mode(
+        std::path::Path::new(":memory:"),
+        project.clone(),
+        true,
+        false,
+    )
+    .unwrap();
+    ops.create_user("operator", PASSWORD, Role::Operator, false, "cli", "cli")
+        .unwrap();
+    let hub = Hub::new(&project);
+    let archive = ops.start_archive(hub.clone());
+    let scanners = start_scanners(&project, &hub);
+    ops.attach_scanners(scanners).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router_with_operations(hub, addr, None, ops.clone());
+    let _task = tokio::spawn(async move {
+        let _archive = archive;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let cookie = login_at(addr, false, "operator").await;
+    // 첫 스캔이 품질을 Good으로 올릴 때까지 기다린다.
+    for _ in 0..50 {
+        let (_, _, tags) = request(addr, "GET", "/api/v1/tags", &cookie, json!({}), "")
+            .await;
+        let good = tags["tags"]
+            .as_array()
+            .map(|ts| {
+                ts.iter().all(|t| t.get("quality").and_then(|q| q.as_str()) == Some("good"))
+            })
+            .unwrap_or(false);
+        if good {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/SETPOINT",
+        &cookie,
+        json!({"value": 4321}),
+        "X-NuriScada-Request: 1\r\n",
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(sim.state().db[&1][10], 4321);
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/RUN",
+        &cookie,
+        json!({"value": true}),
+        "X-NuriScada-Request: 1\r\n",
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    assert!(sim.state().m[83]);
 }
