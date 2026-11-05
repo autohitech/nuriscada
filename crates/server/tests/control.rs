@@ -1210,8 +1210,8 @@ writable=true
 async fn s7_쓰기가_장치에_닿고_감사에_남는다() {
     use nuriscada_sim_s7::Simulator as S7Sim;
     let sim = S7Sim::start("127.0.0.1:0").await.unwrap();
-    sim.set_db(1, 0, &vec![0; 11]);
-    sim.set_m(0, &vec![false; 84]);
+    sim.set_db(1, 0, &[0; 11]);
+    sim.set_m(0, &[false; 84]);
     let project = Arc::new(
         Project::from_toml(&format!(
             r#"
