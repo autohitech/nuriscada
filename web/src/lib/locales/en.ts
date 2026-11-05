@@ -158,6 +158,7 @@ export const en: Messages = {
   importSummary: (dev: number, tag: number) => `${dev} device(s) · ${tag} tag(s)`,
   importApplied: "Applied",
   importNotApplied: "Not applied (preview)",
+  importCsv: "Save CSV",
   unitText: "Unit label",
   tagString: "Text",
   useAlarm: "Use alarm",
