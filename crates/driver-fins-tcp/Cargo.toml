@@ -1,0 +1,20 @@
+[package]
+name = "nuriscada-driver-fins-tcp"
+description = "OMRON FINS/TCP 메모리 영역 읽기 드라이버."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nuriscada-driver-api = { path = "../driver-api" }
+tokio = { workspace = true, features = ["net", "io-util", "time"] }
+
+[dev-dependencies]
+nuriscada-sim-fins = { path = "../sim-fins" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
