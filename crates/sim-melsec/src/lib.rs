@@ -129,20 +129,26 @@ fn error_response(end: u16) -> Vec<u8> {
 
 /// 요청 프레임(머리 포함)에 대한 응답을 만든다. 응답하지 않으면 `None`이다.
 fn respond(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
-    if frame.len() != 21 {
+    if frame.len() < 21 {
         return Some(error_response(0xC05C));
     }
     if frame[0..2] != [0x50, 0x00] {
         return Some(error_response(0xC05C));
     }
-    let len = u16::from_le_bytes([frame[7], frame[8]]);
-    if len != 12 {
-        return Some(error_response(0x0050));
+    let len = usize::from(u16::from_le_bytes([frame[7], frame[8]]));
+    if frame.len() != 9 + len {
+        return Some(error_response(0xC05C));
     }
     let command = u16::from_le_bytes([frame[11], frame[12]]);
     let subcommand = u16::from_le_bytes([frame[13], frame[14]]);
-    if command != 0x0401 || (subcommand != 0x0000 && subcommand != 0x0001) {
+    if (subcommand != 0x0000 && subcommand != 0x0001) || (command != 0x0401 && command != 0x1401) {
         return Some(error_response(0xC05C));
+    }
+    if command == 0x1401 {
+        return respond_write(frame, subcommand, state);
+    }
+    if len != 12 {
+        return Some(error_response(0x0050));
     }
     let head = u32::from_le_bytes([frame[15], frame[16], frame[17], 0]);
     let code = frame[18];
@@ -202,11 +208,79 @@ fn respond(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
     }
 }
 
+/// 일괄 쓰기(1401) 요청을 메모리에 반영한다. 성공하면 종료 코드 0 응답을 만든다.
+fn respond_write(frame: &[u8], subcommand: u16, state: &mut State) -> Option<Vec<u8>> {
+    let head = u32::from_le_bytes([frame[15], frame[16], frame[17], 0]);
+    let code = frame[18];
+    let count = usize::from(u16::from_le_bytes([frame[19], frame[20]]));
+    let data = &frame[21..];
+    let start = head as usize;
+    if count == 0 {
+        return Some(error_response(0xC051));
+    }
+    if subcommand == 0x0000 {
+        if data.len() != count * 2 {
+            return Some(error_response(0x0050));
+        }
+        let regs = match code {
+            0xA8 => &mut state.d,
+            0xB4 => &mut state.w,
+            0xAF => &mut state.r,
+            _ => return Some(error_response(0xC059)),
+        };
+        if start + count > regs.len() {
+            return Some(error_response(0xC050));
+        }
+        for (i, pair) in data.as_chunks::<2>().0.iter().enumerate() {
+            regs[start + i] = u16::from_le_bytes([pair[0], pair[1]]);
+        }
+    } else {
+        if data.len() != count.div_ceil(2) {
+            return Some(error_response(0x0050));
+        }
+        let bits = match code {
+            0x90 => &mut state.m,
+            0x9C => &mut state.x,
+            0x9D => &mut state.y,
+            _ => return Some(error_response(0xC059)),
+        };
+        if start + count > bits.len() {
+            return Some(error_response(0xC050));
+        }
+        for (i, bit) in bits[start..start + count].iter_mut().enumerate() {
+            let byte = data[i / 2];
+            let on = if i % 2 == 0 {
+                byte & 0x01 != 0
+            } else {
+                byte & 0x10 != 0
+            };
+            *bit = on;
+        }
+    }
+    Some(error_response(0x0000))
+}
+
 async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> io::Result<()> {
     loop {
-        // 요청은 항상 21바이트(서브헤더 2 + 경로 5 + 길이 2 + 데이터 12)다.
-        let mut frame = [0u8; 21];
-        stream.read_exact(&mut frame).await?;
+        // 머리(서브헤더 2 + 경로 5 + 길이 2)를 먼저 읽고 길이에 따라 나머지를 읽는다.
+        let mut head = [0u8; 9];
+        stream.read_exact(&mut head).await?;
+        if head[0..2] != [0x50, 0x00] {
+            let reply = error_response(0xC05C);
+            stream.write_all(&reply).await?;
+            continue;
+        }
+        let len = usize::from(u16::from_le_bytes([head[7], head[8]]));
+        if !(12..=4096).contains(&len) {
+            let reply = error_response(0x0050);
+            stream.write_all(&reply).await?;
+            continue;
+        }
+        let mut rest = vec![0u8; len];
+        stream.read_exact(&mut rest).await?;
+        let mut frame = Vec::with_capacity(9 + len);
+        frame.extend_from_slice(&head);
+        frame.extend_from_slice(&rest);
 
         let (delay, drop_now, reply) = {
             let mut s = state.lock().expect("시뮬레이터 상태 잠금");
@@ -288,5 +362,47 @@ mod tests {
         s.read_exact(&mut err).await.unwrap();
         assert_eq!(&err[9..11], &[0x5C, 0xC0]);
         assert_eq!(sim.state().requests_served, 4);
+    }
+}
+
+#[cfg(test)]
+mod write_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn 일괄_쓰기가_메모리에_반영된다() {
+        let sim = Simulator::start("127.0.0.1:0", 100, 64).await.unwrap();
+        let mut s = TcpStream::connect(sim.addr()).await.unwrap();
+        // D10에 0x1234 쓰기(1401/0000).
+        let req = [
+            0x50, 0x00, 0x00, 0xFF, 0xFF, 0x03, 0x00, 0x0E, 0x00, 0x10, 0x00, 0x01, 0x14, 0x00,
+            0x00, 0x0A, 0x00, 0x00, 0xA8, 0x01, 0x00, 0x34, 0x12,
+        ];
+        s.write_all(&req).await.unwrap();
+        let mut resp = [0u8; 11];
+        s.read_exact(&mut resp).await.unwrap();
+        assert_eq!(&resp[9..11], &[0x00, 0x00]);
+        assert_eq!(sim.state().d[10], 0x1234);
+        // M0·M1에 true·false 쓰기(1401/0001).
+        let req = [
+            0x50, 0x00, 0x00, 0xFF, 0xFF, 0x03, 0x00, 0x0D, 0x00, 0x10, 0x00, 0x01, 0x14, 0x01,
+            0x00, 0x00, 0x00, 0x00, 0x90, 0x02, 0x00, 0x01,
+        ];
+        s.write_all(&req).await.unwrap();
+        s.read_exact(&mut resp).await.unwrap();
+        assert_eq!(&resp[9..11], &[0x00, 0x00]);
+        let (m0, m1) = {
+            let st = sim.state();
+            (st.m[0], st.m[1])
+        };
+        assert!(m0 && !m1);
+        // 범위 밖 D 쓰기 → C050.
+        let req = [
+            0x50, 0x00, 0x00, 0xFF, 0xFF, 0x03, 0x00, 0x10, 0x00, 0x10, 0x00, 0x01, 0x14, 0x00,
+            0x00, 0x63, 0x00, 0x00, 0xA8, 0x02, 0x00, 0x01, 0x00, 0x02, 0x00,
+        ];
+        s.write_all(&req).await.unwrap();
+        s.read_exact(&mut resp).await.unwrap();
+        assert_eq!(&resp[9..11], &[0x50, 0xC0]);
     }
 }

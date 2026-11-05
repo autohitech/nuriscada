@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright NuriScada contributors
 
-//! MELSEC MC 프로토콜(3E 바이너리) 클라이언트. 일괄 읽기만 지원한다.
+//! MELSEC MC 프로토콜(3E 바이너리) 클라이언트. 일괄 읽기·쓰기를 지원한다.
 
 use std::time::{Duration, Instant};
 
@@ -11,8 +11,8 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 use crate::protocol::{
-    RESPONSE_HEADER_LEN, ReadRequest, decode_read_response, encode_read_request,
-    remaining_after_header,
+    RESPONSE_HEADER_LEN, ReadRequest, WriteRequest, decode_read_response, decode_write_response,
+    encode_read_request, encode_write_request, remaining_after_header,
 };
 
 /// D 레지스터 영역 번호.
@@ -91,6 +91,83 @@ impl MelsecMcClient {
             .await
             .map_err(|e| DriverError::Connection(e.to_string()))?;
         decode_read_response(req, &frame)
+    }
+
+    async fn exchange_write(stream: &mut TcpStream, request: &[u8]) -> Result<(), DriverError> {
+        stream
+            .write_all(request)
+            .await
+            .map_err(|e| DriverError::Connection(e.to_string()))?;
+        let mut header = [0u8; RESPONSE_HEADER_LEN];
+        stream
+            .read_exact(&mut header)
+            .await
+            .map_err(|e| DriverError::Connection(e.to_string()))?;
+        let rest = remaining_after_header(&header)?;
+        let mut frame = vec![0u8; RESPONSE_HEADER_LEN + rest];
+        frame[..RESPONSE_HEADER_LEN].copy_from_slice(&header);
+        stream
+            .read_exact(&mut frame[RESPONSE_HEADER_LEN..])
+            .await
+            .map_err(|e| DriverError::Connection(e.to_string()))?;
+        decode_write_response(&frame)
+    }
+
+    /// 단일 워드(D) 또는 비트(M)를 쓴다. `unit`은 무시한다(MC 프레임에 국번이 없다).
+    /// 불명확한 결과를 자동 재시도하지 않는다.
+    pub async fn write_single(
+        &mut self,
+        _unit: u8,
+        space: u16,
+        address: u16,
+        value: u16,
+    ) -> Result<(), DriverError> {
+        let req = match space {
+            SPACE_D => WriteRequest::Words {
+                code: 0xA8,
+                head: u32::from(address),
+                values: vec![value],
+            },
+            SPACE_M => WriteRequest::Bits {
+                code: 0x90,
+                head: u32::from(address),
+                values: vec![value != 0],
+            },
+            _ => {
+                return Err(DriverError::InvalidRequest(format!(
+                    "쓰기는 D·M 영역만 지원한다: {space}"
+                )));
+            }
+        };
+        let frame = encode_write_request(&req)?;
+
+        let started = Instant::now();
+        let result = async {
+            self.connect().await?;
+            let stream = self.stream.as_mut().expect("방금 연결했다");
+            timeout(self.timeout, Self::exchange_write(stream, &frame))
+                .await
+                .map_err(|_| DriverError::Timeout)?
+        }
+        .await;
+
+        match &result {
+            Ok(()) => {
+                self.status.requests_ok += 1;
+                self.status.last_round_trip = Some(started.elapsed());
+            }
+            Err(e) => {
+                self.status.requests_failed += 1;
+                // 장치가 오류를 응답한 경우 연결은 정상이다. 그 밖의 오류는 연결을 버린다.
+                if !matches!(
+                    e,
+                    DriverError::Device { .. } | DriverError::InvalidRequest(_)
+                ) {
+                    self.drop_connection();
+                }
+            }
+        }
+        result
     }
 }
 

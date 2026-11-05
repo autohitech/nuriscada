@@ -3,8 +3,8 @@
 
 //! MELSEC MC 프로토콜 3E 바이너리 프레임의 부호화와 해석. I/O 없는 순수 함수다.
 //!
-//! 공개된 MELSEC 커뮤니케이션 규격의 일괄 읽기(0401)에서 출발했다.
-//! 워드 일괄 읽기(서브 0000)와 비트 일괄 읽기(서브 0001)만 지원한다.
+//! 공개된 MELSEC 커뮤니케이션 규격의 일괄 읽기(0401)와 일괄 쓰기(1401)에서 출발했다.
+//! 워드(서브 0000)와 비트(서브 0001)만 지원한다.
 
 use nuriscada_driver_api::{BlockData, DataKind, DriverError};
 
@@ -18,6 +18,8 @@ pub const ACCESS_ROUTE: [u8; 5] = [0x00, 0xFF, 0xFF, 0x03, 0x00];
 pub const MONITOR_TIMER: u16 = 0x0010;
 /// 일괄 읽기 명령(0401).
 pub const CMD_BATCH_READ: u16 = 0x0401;
+/// 일괄 쓰기 명령(1401).
+pub const CMD_BATCH_WRITE: u16 = 0x1401;
 /// 응답 머리 길이(서브헤더 2 + 경로 5 + 길이 2 + 종료 코드 2).
 pub const RESPONSE_HEADER_LEN: usize = 11;
 
@@ -225,6 +227,114 @@ pub fn decode_read_response(req: &ReadRequest, frame: &[u8]) -> Result<BlockData
     }
 }
 
+/// 일괄 쓰기 요청.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriteRequest {
+    /// 워드 장치 쓰기.
+    Words {
+        /// 장치 코드.
+        code: u8,
+        /// 선두 장치 번호(24비트).
+        head: u32,
+        /// 쓸 워드 값.
+        values: Vec<u16>,
+    },
+    /// 비트 장치 쓰기.
+    Bits {
+        /// 장치 코드.
+        code: u8,
+        /// 선두 장치 번호(24비트).
+        head: u32,
+        /// 쓸 비트 값.
+        values: Vec<bool>,
+    },
+}
+
+/// 요청을 3E 바이너리 프레임으로 만든다. 쓰기 한도는 읽기와 같다.
+pub fn encode_write_request(req: &WriteRequest) -> Result<Vec<u8>, DriverError> {
+    let (subcommand, head, code, data) = match req {
+        WriteRequest::Words { code, head, values } => {
+            if values.is_empty() || values.len() > usize::from(MAX_WORD_POINTS) {
+                return Err(DriverError::InvalidRequest(format!(
+                    "워드 쓰기 개수 {}는 1~{MAX_WORD_POINTS}이어야 한다",
+                    values.len()
+                )));
+            }
+            let mut data = Vec::with_capacity(values.len() * 2);
+            for v in values {
+                data.extend_from_slice(&v.to_le_bytes());
+            }
+            (0x0000u16, *head, *code, data)
+        }
+        WriteRequest::Bits { code, head, values } => {
+            if values.is_empty() || values.len() > usize::from(MAX_BIT_POINTS) {
+                return Err(DriverError::InvalidRequest(format!(
+                    "비트 쓰기 개수 {}는 1~{MAX_BIT_POINTS}이어야 한다",
+                    values.len()
+                )));
+            }
+            // 읽기 응답과 같은 니블 포장(1점당 4비트에 2점씩).
+            let mut data = vec![0u8; values.len().div_ceil(2)];
+            for (i, &bit) in values.iter().enumerate() {
+                if bit {
+                    if i % 2 == 0 {
+                        data[i / 2] |= 0x01;
+                    } else {
+                        data[i / 2] |= 0x10;
+                    }
+                }
+            }
+            (0x0001u16, *head, *code, data)
+        }
+    };
+    if head > 0xFF_FFFF {
+        return Err(DriverError::InvalidRequest(format!(
+            "장치 번호 {head}는 24비트를 넘어선다"
+        )));
+    }
+    let points = match req {
+        WriteRequest::Words { values, .. } => values.len(),
+        WriteRequest::Bits { values, .. } => values.len(),
+    };
+    let count = u16::try_from(points).expect("한도 이하");
+    let len = u16::try_from(12 + data.len())
+        .map_err(|_| DriverError::InvalidRequest("쓰기 데이터가 프레임 한도를 넘는다".into()))?;
+    // 데이터 길이 = 타이머 2 + 명령 2 + 서브 2 + 선두 번호 3 + 코드 1 + 개수 2 + 데이터.
+    let mut frame = Vec::with_capacity(21 + data.len());
+    frame.extend_from_slice(&REQ_SUBHEADER);
+    frame.extend_from_slice(&ACCESS_ROUTE);
+    frame.extend_from_slice(&len.to_le_bytes());
+    frame.extend_from_slice(&MONITOR_TIMER.to_le_bytes());
+    frame.extend_from_slice(&CMD_BATCH_WRITE.to_le_bytes());
+    frame.extend_from_slice(&subcommand.to_le_bytes());
+    frame.extend_from_slice(&head.to_le_bytes()[..3]);
+    frame.push(code);
+    frame.extend_from_slice(&count.to_le_bytes());
+    frame.extend_from_slice(&data);
+    Ok(frame)
+}
+
+/// 쓰기 응답 프레임(머리 포함)을 해석한다. 데이터 없이 종료 코드만 있다.
+pub fn decode_write_response(frame: &[u8]) -> Result<(), DriverError> {
+    if frame.len() < RESPONSE_HEADER_LEN {
+        return Err(DriverError::Protocol(format!(
+            "응답이 머리보다 짧다: {}",
+            frame.len()
+        )));
+    }
+    if frame[0..2] != RES_SUBHEADER {
+        return Err(DriverError::Protocol("서브헤더가 D0 00이 아니다".into()));
+    }
+    let end = u16::from_le_bytes([frame[9], frame[10]]);
+    if end != 0 {
+        return Err(DriverError::Device {
+            code: (end & 0xFF) as u8,
+            text: format!("MC {}", end_code_text(end)),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,5 +451,56 @@ mod tests {
             decode_read_response(&req, &frame).unwrap_err(),
             DriverError::Protocol(_)
         ));
+    }
+
+    #[test]
+    fn 워드_쓰기_요청_인코딩_d200_1점() {
+        let req = WriteRequest::Words {
+            code: WordDevice::D as u8,
+            head: 200,
+            values: vec![0x1234],
+        };
+        let frame = encode_write_request(&req).unwrap();
+        assert_eq!(
+            frame,
+            vec![
+                0x50, 0x00, // 서브헤더
+                0x00, 0xFF, 0xFF, 0x03, 0x00, // 경로
+                0x0E, 0x00, // 데이터 길이 14
+                0x10, 0x00, // 타이머
+                0x01, 0x14, // 1401
+                0x00, 0x00, // 서브 0000
+                0xC8, 0x00, 0x00, // D200
+                0xA8, // D
+                0x01, 0x00, // 1점
+                0x34, 0x12, // 값
+            ]
+        );
+    }
+
+    #[test]
+    fn 비트_쓰기_요청_인코딩_m0_2점() {
+        let req = WriteRequest::Bits {
+            code: BitDevice::M as u8,
+            head: 0,
+            values: vec![true, false],
+        };
+        let frame = encode_write_request(&req).unwrap();
+        assert_eq!(frame[11..15], [0x01, 0x14, 0x01, 0x00]);
+        assert_eq!(frame[15..22], [0x00, 0x00, 0x00, 0x90, 0x02, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn 쓰기_응답은_종료_코드만_본다() {
+        let ok = vec![
+            0xD0, 0x00, 0x00, 0xFF, 0xFF, 0x03, 0x00, 0x02, 0x00, 0x00, 0x00,
+        ];
+        assert!(decode_write_response(&ok).is_ok());
+        let bad = vec![
+            0xD0, 0x00, 0x00, 0xFF, 0xFF, 0x03, 0x00, 0x02, 0x00, 0x51, 0xC0,
+        ];
+        let err = decode_write_response(&bad).unwrap_err();
+        assert!(matches!(err, DriverError::Device { .. }));
+        assert!(err.to_string().contains("C051"));
     }
 }
