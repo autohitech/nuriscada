@@ -2,7 +2,7 @@
 #   cargo run -p nuriscada-sim-fins -- --demo
 #   cargo run -p nuriscada-server -- --config examples/demo-fins.toml --init-admin admin
 #   cargo run -p nuriscada-server -- --config examples/demo-fins.toml --enable-writes
-# FINS 장치는 읽기 전용이다. cio 주소는 비트 번호다(워드×16 + 비트, CIO 1.00 = 16).
+# 쓰기는 dm 영역만 허용한다. cio 주소는 비트 번호다(워드×16 + 비트, CIO 1.00 = 16).
 
 [server]
 listen = "127.0.0.1:8083"
@@ -12,10 +12,9 @@ name = "omron1"
 driver = "fins-tcp"
 address = "127.0.0.1:9600"
 timeout_ms = 500
-scan_ms = 100
-
 [[tag]]
 name = "DRYER_TEMP"
+writable = true
 device = "omron1"
 space = "dm"
 address = 20

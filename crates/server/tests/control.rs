@@ -1018,3 +1018,96 @@ writable=true
     assert_eq!(code, 200, "{body}");
     assert!(sim.state().mx[0]);
 }
+
+#[tokio::test]
+async fn fins_쓰기가_장치에_닿고_감사에_남는다() {
+    use nuriscada_sim_fins::Simulator as FinsSim;
+    let sim = FinsSim::start("127.0.0.1:0", 300, 64).await.unwrap();
+    let project = Arc::new(
+        Project::from_toml(&format!(
+            r#"
+[[device]]
+name="omron1"
+driver="fins-tcp"
+address="{}"
+scan_ms=20
+[[tag]]
+name="LEVEL"
+device="omron1"
+space="dm"
+address=20
+type="analog"
+writable=true
+scale={{plc_base=0,plc_full=100,base=0,full=100}}
+"#,
+            sim.addr()
+        ))
+        .unwrap(),
+    );
+    let ops = Operations::open_with_mode(
+        std::path::Path::new(":memory:"),
+        project.clone(),
+        true,
+        false,
+    )
+    .unwrap();
+    ops.create_user("admin", PASSWORD, Role::Admin, true, "cli", "cli")
+        .unwrap();
+    ops.create_user("operator", PASSWORD, Role::Operator, false, "admin", "cli")
+        .unwrap();
+    let hub = Hub::new(&project);
+    let archive = ops.start_archive(hub.clone());
+    let scanners = start_scanners(&project, &hub);
+    ops.attach_scanners(scanners).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router_with_operations(hub, addr, None, ops.clone());
+    let _task = tokio::spawn(async move {
+        let _archive = archive;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (code, headers, _) = request(
+        addr,
+        "POST",
+        "/api/v1/auth/login",
+        "",
+        json!({"username":"operator","password":PASSWORD}),
+        "X-NuriScada-Request: 1\r\n",
+    )
+    .await;
+    assert_eq!(code, 200, "{headers}");
+    let cookie = headers
+        .lines()
+        .find_map(|l| {
+            l.to_lowercase().starts_with("set-cookie:").then(|| {
+                l.split_once(':')
+                    .unwrap()
+                    .1
+                    .trim()
+                    .split(';')
+                    .next()
+                    .unwrap()
+                    .to_string()
+            })
+        })
+        .unwrap();
+
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/LEVEL",
+        &cookie,
+        json!({"value": 321}),
+        "X-NuriScada-Request: 1\r\n",
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(sim.state().dm[20], 321);
+}

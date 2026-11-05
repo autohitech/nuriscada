@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright NuriScada contributors
 
-//! FINS/TCP 메모리 영역 읽기 클라이언트. 연결할 때 노드 주소 교환을 수행한다.
+//! FINS/TCP 메모리 영역 읽기·쓰기 클라이언트. 연결할 때 노드 주소 교환을 수행한다.
 
 use std::time::{Duration, Instant};
 
@@ -11,8 +11,9 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 use crate::protocol::{
-    ReadRequest, TCP_HEADER_LEN, decode_node_response, decode_read_response, encode_node_request,
-    encode_read_request, remaining_after_header,
+    ReadRequest, TCP_HEADER_LEN, WriteRequest, decode_node_response, decode_read_response,
+    decode_write_response, encode_node_request, encode_read_request, encode_write_request,
+    remaining_after_header,
 };
 
 /// DM 워드 영역 번호.
@@ -75,6 +76,76 @@ impl FinsTcpClient {
             .await
             .map_err(|e| DriverError::Connection(e.to_string()))?;
         decode_read_response(req, &frame)
+    }
+
+    async fn exchange_write(stream: &mut TcpStream, request: &[u8]) -> Result<(), DriverError> {
+        stream
+            .write_all(request)
+            .await
+            .map_err(|e| DriverError::Connection(e.to_string()))?;
+        let mut header = [0u8; TCP_HEADER_LEN];
+        stream
+            .read_exact(&mut header)
+            .await
+            .map_err(|e| DriverError::Connection(e.to_string()))?;
+        let rest = remaining_after_header(&header)?;
+        let mut frame = vec![0u8; TCP_HEADER_LEN + rest];
+        frame[..TCP_HEADER_LEN].copy_from_slice(&header);
+        stream
+            .read_exact(&mut frame[TCP_HEADER_LEN..])
+            .await
+            .map_err(|e| DriverError::Connection(e.to_string()))?;
+        decode_write_response(&frame)
+    }
+
+    /// 단일 DM 워드를 쓴다. `unit`은 무시한다.
+    /// 불명확한 결과를 자동 재시도하지 않는다.
+    pub async fn write_single(
+        &mut self,
+        _unit: u8,
+        space: u16,
+        address: u16,
+        value: u16,
+    ) -> Result<(), DriverError> {
+        if space != SPACE_DM {
+            return Err(DriverError::InvalidRequest(format!(
+                "쓰기는 DM 영역만 지원한다: {space}"
+            )));
+        }
+        let req = WriteRequest {
+            start: address,
+            values: vec![value],
+        };
+        self.sid = self.sid.wrapping_add(1);
+        let frame = encode_write_request(self.client_node, self.server_node, self.sid, &req)?;
+
+        let started = Instant::now();
+        let result = async {
+            self.connect().await?;
+            let stream = self.stream.as_mut().expect("방금 연결했다");
+            timeout(self.timeout, Self::exchange_write(stream, &frame))
+                .await
+                .map_err(|_| DriverError::Timeout)?
+        }
+        .await;
+
+        match &result {
+            Ok(()) => {
+                self.status.requests_ok += 1;
+                self.status.last_round_trip = Some(started.elapsed());
+            }
+            Err(e) => {
+                self.status.requests_failed += 1;
+                // 장치가 오류를 응답한 경우 연결은 정상이다. 그 밖의 오류는 연결을 버린다.
+                if !matches!(
+                    e,
+                    DriverError::Device { .. } | DriverError::InvalidRequest(_)
+                ) {
+                    self.drop_connection();
+                }
+            }
+        }
+        result
     }
 }
 

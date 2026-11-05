@@ -149,3 +149,39 @@ async fn 연결_실패는_연결_오류다() {
         Err(DriverError::Connection(_) | DriverError::Timeout)
     ));
 }
+
+#[tokio::test]
+async fn 단일_dm_쓰기_후_읽힌다() {
+    let (sim, mut client) = setup().await;
+    client.write_single(0, SPACE_DM, 20, 321).await.unwrap();
+    assert_eq!(
+        client
+            .read(&block(SPACE_DM, 20, 1, DataKind::Word))
+            .await
+            .unwrap(),
+        BlockData::Words(vec![321])
+    );
+    assert_eq!(sim.state().dm[20], 321);
+}
+
+#[tokio::test]
+async fn 지원하지_않는_영역_쓰기는_거부한다() {
+    let (_sim, mut client) = setup().await;
+    assert!(matches!(
+        client.write_single(0, SPACE_CIO, 0, 1).await,
+        Err(DriverError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        client.write_single(0, 999, 0, 1).await,
+        Err(DriverError::InvalidRequest(_))
+    ));
+}
+
+#[tokio::test]
+async fn 범위를_벗어난_쓰기는_장치_오류다() {
+    let (_sim, mut client) = setup().await;
+    assert!(matches!(
+        client.write_single(0, SPACE_DM, 300, 1).await,
+        Err(DriverError::Device { .. })
+    ));
+}

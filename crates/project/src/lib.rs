@@ -666,10 +666,12 @@ impl Project {
                         }
                     }
                     DriverConfig::FinsTcp { .. } => {
-                        return invalid(format!(
-                            "태그 `{}`: FINS 장치는 읽기 전용이다 (쓰기 미지원)",
-                            t.name
-                        ));
+                        if !matches!(space, Space::FinsDm) {
+                            return invalid(format!(
+                                "태그 `{}`: FINS 쓰기는 dm 영역만 허용한다",
+                                t.name
+                            ));
+                        }
                     }
                     DriverConfig::ModbusTcp { .. } => {
                         if !matches!(space, Space::Coil | Space::Holding) || t.unit == 0 {
