@@ -686,6 +686,10 @@ pub(super) async fn write_tag(
                 .write_single(tag.unit, tag.space.code(), tag.address, raw)
                 .await
         }
+        DriverConfig::S7Tcp { .. } => {
+            // 검증에서 S7 태그의 쓰기를 이미 거부하므로 여기에는 닿지 않는다.
+            return Err(error(StatusCode::NOT_FOUND, Code::WriteTagNotWritable));
+        }
     };
     let detail = match &outcome {
         Ok(()) => json!({"requested_raw_value":input.value,"outcome":"device_acknowledged"}),

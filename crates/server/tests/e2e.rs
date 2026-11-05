@@ -517,3 +517,72 @@ type = "digital"
     );
     scanners.stop().await;
 }
+
+#[tokio::test]
+async fn s7_값과_상태가_흐른다() {
+    use nuriscada_sim_s7::Simulator as S7Sim;
+    let sim = S7Sim::start("127.0.0.1:0").await.unwrap();
+    sim.set_db(1, 0, &[321, 0]);
+    sim.set_m(0, &[true, false]);
+    let project = Arc::new(
+        Project::from_toml(&format!(
+            r#"
+[[device]]
+name = "siemens1"
+driver = "s7-tcp"
+address = "{}"
+timeout_ms = 300
+scan_ms = 20
+
+[[tag]]
+name = "TEMP"
+device = "siemens1"
+unit = 1
+space = "s7db"
+address = 0
+type = "analog"
+unit_text = "℃"
+scale = {{ plc_base = 0, plc_full = 100, base = 0, full = 1000 }}
+alarm = {{ kind = 1, hihi = 900, gap = 50 }}
+
+[[tag]]
+name = "RUN"
+device = "siemens1"
+unit = 0
+space = "s7m"
+address = 0
+type = "digital"
+"#,
+            sim.addr()
+        ))
+        .unwrap(),
+    );
+    let hub = Hub::new(&project);
+    let scanners = start_scanners(&project, &hub);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router(hub, addr);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    // DB1.0 = 321 → 표시값 3210, 상상한 알람. M0.0 = true.
+    wait_for(|| async {
+        let doc = json(addr, "/api/v1/tags").await;
+        tag(&doc, "TEMP")["value"] == 3210.0
+    })
+    .await;
+    let doc = json(addr, "/api/v1/tags").await;
+    assert_eq!(tag(&doc, "RUN")["value"], true);
+    let status = json(addr, "/api/v1/status").await;
+    assert_eq!(status["devices"][0]["connected"], true);
+    let alarms = json(addr, "/api/v1/alarms").await;
+    assert!(
+        alarms["active"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["name"] == "TEMP")
+    );
+    scanners.stop().await;
+}

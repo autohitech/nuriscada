@@ -498,6 +498,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nuriscada-driver-s7"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "nuriscada-driver-api",
+ "nuriscada-sim-s7",
+ "tokio",
+]
+
+[[package]]
 name = "nuriscada-driver-xgt-fenet"
 version = "0.1.0-alpha.1"
 dependencies = [
@@ -541,12 +550,14 @@ dependencies = [
  "nuriscada-driver-fins-tcp",
  "nuriscada-driver-melsec-mc",
  "nuriscada-driver-modbus-tcp",
+ "nuriscada-driver-s7",
  "nuriscada-driver-xgt-fenet",
  "nuriscada-project",
  "nuriscada-scheduler",
  "nuriscada-sim-fins",
  "nuriscada-sim-melsec",
  "nuriscada-sim-modbus",
+ "nuriscada-sim-s7",
  "nuriscada-sim-xgt",
  "rpassword",
  "rusqlite",
@@ -573,6 +584,13 @@ dependencies = [
 
 [[package]]
 name = "nuriscada-sim-modbus"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
+name = "nuriscada-sim-s7"
 version = "0.1.0-alpha.1"
 dependencies = [
  "tokio",
