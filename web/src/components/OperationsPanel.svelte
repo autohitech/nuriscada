@@ -25,6 +25,7 @@
   let pending = $state<{ name: string; value: number | boolean } | null>(null);
   let batchRows = $state<{ name: string; raw: string }[]>([]);
   let batchResults = $state<{ name: string; outcome: string }[] | null>(null);
+  let pendingBatch = $state<{ name: string; value: number | boolean }[] | null>(null);
   let events = $state<{ seq: number; event: { time_ms: number; actor: string; source: string; action: string; target: string; detail: unknown } }[]>([]);
   let newName = $state("");
   let newPassword = $state("");
@@ -228,11 +229,11 @@
   function addBatchRow() {
     const first = targets[0]?.name ?? "";
     batchRows = [...batchRows, { name: first, raw: "0" }];
-    batchResults = null;
+    batchResults = null; pendingBatch = null;
   }
 
   function submitBatch(event: SubmitEvent) {
-    event.preventDefault(); message = ""; batchResults = null;
+    event.preventDefault(); message = ""; batchResults = null; pendingBatch = null;
     if (batchRows.length === 0 || batchRows.length > 64) { message = m.rawIntRange; return; }
     const writes: { name: string; value: number | boolean }[] = [];
     for (const row of batchRows) {
@@ -244,12 +245,7 @@
         writes.push({ name: row.name, value: Number(row.raw) });
       }
     }
-    void perform(async () => {
-      const res = await request("control/tags/batch", { writes }) as { ok: boolean; results: { name: string; outcome: string }[] };
-      batchRows = [];
-      batchResults = res.results;
-      message = res.ok ? m.batchDone : m.batchPartial;
-    });
+    pendingBatch = writes;
   }
 
   onMount(() => {
@@ -319,7 +315,7 @@
                 {#if targets.find(t => t.name === row.name)?.kind === "bool"}
                   <label>{m.colValue} <select bind:value={row.raw}><option value="0">OFF</option><option value="1">ON</option></select></label>
                 {:else}<label>{m.rawRegisterValue} <input inputmode="numeric" bind:value={row.raw} required /></label>{/if}
-                <button type="button" disabled={busy} onclick={() => { batchRows = batchRows.filter((_, j) => j !== i); batchResults = null; }}>{m.removeTag}</button>
+                <button type="button" disabled={busy} onclick={() => { batchRows = batchRows.filter((_, j) => j !== i); batchResults = null; pendingBatch = null; }}>{m.removeTag}</button>
               </div>
             {/each}
             <div class="inline">
@@ -327,6 +323,20 @@
               <button disabled={busy || batchRows.length === 0}>{m.reviewWrite}</button>
             </div>
           </form>
+          {#if pendingBatch}
+            <div class="confirmation">
+              {#each pendingBatch as w, i (i)}<p>{m.writeConfirm(w.name, String(w.value))}</p>{/each}
+              <button disabled={busy} onclick={() => void perform(async () => {
+                const writes = pendingBatch; pendingBatch = null;
+                if (!writes) return;
+                const res = await request("control/tags/batch", { writes }) as { ok: boolean; results: { name: string; outcome: string }[] };
+                batchRows = [];
+                batchResults = res.results;
+                message = res.ok ? m.batchDone : m.batchPartial;
+              })}>{m.confirmWrite}</button>
+              <button disabled={busy} onclick={() => pendingBatch = null}>{m.cancel}</button>
+            </div>
+          {/if}
           {#if batchResults}
             <div class="audit">
               {#each batchResults as r, i (i)}<p><strong>{r.name}</strong> · {m.batchOutcome(r.outcome)}</p>{/each}
