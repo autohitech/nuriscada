@@ -306,14 +306,12 @@ async fn security_headers(req: Request, next: Next) -> Response {
     let api = req.uri().path().starts_with("/api/");
     let mut res = next.run(req).await;
     let h = res.headers_mut();
-    h.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(
+    h.entry(header::CONTENT_SECURITY_POLICY)
+        .or_insert(HeaderValue::from_static(
             "default-src 'self'; connect-src 'self'; img-src 'self' data:; \
              style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; \
              form-action 'none'; frame-ancestors 'none'",
-        ),
-    );
+        ));
     h.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
@@ -385,19 +383,31 @@ async fn static_files(State(s): State<AppState>, uri: Uri) -> Response {
     let Some((real, bytes)) = found else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let is_svg = real.extension().and_then(|e| e.to_str()) == Some("svg");
     let cache = if real.components().any(|c| c.as_os_str() == "assets") {
         "public, max-age=31536000, immutable"
     } else {
         "no-cache"
     };
-    (
+    let mut res = (
         [
             (header::CONTENT_TYPE, content_type(&real)),
             (header::CACHE_CONTROL, cache),
         ],
         bytes,
     )
-        .into_response()
+        .into_response();
+    if is_svg {
+        // 신뢰할 수 없는 SVG가 정적 디렉터리에 섞여도 스크립트가 돌지 않는다(SQ-G10).
+        res.headers_mut().insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(
+                "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; \
+                 img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+            ),
+        );
+    }
+    res
 }
 
 async fn tags(State(s): State<AppState>) -> Json<serde_json::Value> {

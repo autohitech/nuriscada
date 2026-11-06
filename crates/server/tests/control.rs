@@ -1647,3 +1647,56 @@ value=true
     assert_eq!(code, 200, "{body}");
     assert!(sim.state().coils[1]);
 }
+
+#[tokio::test]
+async fn svg_정적_파일은_스크립트를_막는_csp를_단다() {
+    let dir = std::env::temp_dir().join(format!("nuriscada-svg-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("evil.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>"#,
+    )
+    .unwrap();
+    let project = Arc::new(
+        Project::from_toml(
+            r#"
+[[device]]
+name="sim"
+driver="modbus-tcp"
+address="127.0.0.1:1"
+scan_ms=1000
+"#,
+        )
+        .unwrap(),
+    );
+    let ops = Operations::open_with_mode(
+        std::path::Path::new(":memory:"),
+        project.clone(),
+        false,
+        false,
+    )
+    .unwrap();
+    let hub = Hub::new(&project);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router_with_operations(hub, addr, Some(dir.clone()), ops);
+    let _task = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (code, headers, _) = request(addr, "GET", "/evil.svg", "", json!({}), "").await;
+    assert_eq!(code, 200, "{headers}");
+    let lower = headers.to_lowercase();
+    assert!(lower.contains("image/svg+xml"), "{headers}");
+    let csp = lower
+        .lines()
+        .find(|l| l.starts_with("content-security-policy:"))
+        .unwrap_or("");
+    assert!(csp.contains("script-src 'none'"), "{headers}");
+    std::fs::remove_dir_all(&dir).ok();
+}
