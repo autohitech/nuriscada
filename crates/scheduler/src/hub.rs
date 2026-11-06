@@ -479,6 +479,10 @@ impl Hub {
     pub fn devices(&self) -> Vec<DeviceStatus> {
         self.read().devices.clone()
     }
+    /// 진단 한 줄: 장치별 스캔 수·밀린 스캔·지터·재시작·마지막 오류. 서버가 주기적으로 기록한다.
+    pub fn diagnostic_line(&self) -> String {
+        diagnostic_line(&self.read().devices)
+    }
 
     /// 태그 상태를 갱신한다. 값·품질·알람 상태 중 바뀐 것이 있을 때만 변경으로 표시한다.
     /// 변경은 [`Hub::drain_changes`]가 묶어 방송한다.
@@ -563,6 +567,29 @@ impl Hub {
         }
     }
 }
+/// 장치 진단 한 줄(순수 함수라 시험할 수 있다).
+pub fn diagnostic_line(devices: &[DeviceStatus]) -> String {
+    devices
+        .iter()
+        .map(|d| {
+            format!(
+                "{} connected={} scans={} overruns={} restarts={} jitter_p99_us={} jitter_max_us={} rtt_ms={} ok={} failed={} error={}",
+                d.name,
+                d.connected,
+                d.scans,
+                d.overruns,
+                d.restarts,
+                d.jitter_p99_us.map_or_else(|| "-".into(), |v| v.to_string()),
+                d.jitter_max_us,
+                d.round_trip_ms.map_or_else(|| "-".into(), |v| format!("{v:.1}")),
+                d.requests_ok,
+                d.requests_failed,
+                d.last_error.as_deref().unwrap_or("-"),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -593,5 +620,14 @@ mod tests {
         // 같은 값으로 다시 두면 묶음이 생기지 않는다.
         hub.set_tag(1500, Some(TagValue::Bool(true)), Quality::Good, None);
         assert!(hub.drain_changes().is_none());
+    }
+    #[test]
+    fn 진단_한_줄에_지터와_재시작이_든다() {
+        let hub = Hub::new(&big_project(2));
+        hub.record_restart(0, "시험 재시작");
+        let line = hub.diagnostic_line();
+        assert!(line.contains("d connected=false"), "{line}");
+        assert!(line.contains("restarts=1"), "{line}");
+        assert!(line.contains("jitter_p99_us="), "{line}");
     }
 }

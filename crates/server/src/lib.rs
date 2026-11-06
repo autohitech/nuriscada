@@ -144,6 +144,24 @@ pub fn start_scanners(project: &Arc<Project>, hub: &Arc<Hub>) -> Scanners {
             rx.clone(),
         )));
     }
+    {
+        let hub = Arc::clone(hub);
+        let mut shutdown = rx.clone();
+        tasks.push(tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => {
+                        eprintln!("진단: {}", hub.diagnostic_line());
+                    }
+                    _ = shutdown.changed() => {
+                        return;
+                    }
+                }
+            }
+        }));
+    }
     Scanners { shutdown, tasks }
 }
 
