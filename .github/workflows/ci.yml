@@ -115,7 +115,7 @@ jobs:
         working-directory: web
         run: npm ci
       - name: Playwright 브라우저 설치
-        run: npx --prefix web playwright install chromium --only-shell
+        run: npx --prefix web playwright install chromium firefox webkit --only-shell
       - name: 촬영 후 검토용으로 보관
         run: bash scripts/visual.sh --review
       - name: 촬영본 보관
