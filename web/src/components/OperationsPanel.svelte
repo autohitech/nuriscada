@@ -4,7 +4,8 @@
   import { onMount } from "svelte";
   import type { AlarmRecord, DeviceSpec, ImportReport, ProjectSpec, TagHistorySample, TagSpec } from "../lib/types";
   import { UndoStack } from "../lib/undo-stack";
-  import { formatDateTime, formatImportCsv, formatTime } from "../lib/format";
+  import { formatDateTime, formatImportCsv, formatTime, formatValue } from "../lib/format";
+  import type { Store } from "../lib/store.svelte";
   import { eventLabel, m } from "../lib/i18n.svelte";
   import { apiErrorMessage } from "../lib/api";
   export interface SessionDoc {
@@ -14,7 +15,7 @@
     local_management?: boolean;
     user: { username: string; role: "admin" | "operator" | "viewer"; expires_ms: number } | null;
   }
-  let { onSession }: { onSession: (session: SessionDoc) => void } = $props();
+  let { onSession, store }: { onSession: (session: SessionDoc) => void; store: Store } = $props();
   let session = $state<SessionDoc | null>(null);
   let username = $state("");
   let password = $state("");
@@ -524,6 +525,8 @@
                       {:else}
                         <input type="number" step="1" value={cond.value} onchange={(e) => { cond.value = Number((e.currentTarget as HTMLInputElement).value); tag.interlock = [...tag.interlock]; }} />
                       {/if}
+                      {@const live = store.tags.find((t) => t.name === cond.tag)}
+                      <span class="muted" title={live?.quality === "bad" ? m.badQuality : ""}>→ {live ? formatValue(live.value) : "—"} {live && live.quality === "good" && ((typeof cond.value === "boolean" && typeof live.value === "boolean" && cond.value === live.value) || (typeof cond.value === "number" && typeof live.value === "number" && cond.value === live.value)) ? "✓" : "✗"}</span>
                       <button type="button" disabled={busy} onclick={() => { tag.interlock = tag.interlock.filter((_, j) => j !== ci); }}>{m.removeCond}</button>
                     {/each}
                     <button type="button" disabled={busy} onclick={() => { const first = (projectSpec?.tag ?? []).find((t2) => t2.name !== tag.name); if (first) tag.interlock = [...tag.interlock, { tag: first.name, value: false }]; }}>{m.addRow}</button>
