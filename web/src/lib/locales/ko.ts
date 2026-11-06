@@ -297,6 +297,7 @@ export const ko = {
   linkedTag: "연결 태그",
   visibilityTag: "가시성 조건 태그",
   rotateTag: "회전 각도 태그",
+  moveTag: "이동 태그(x 오프셋)",
   notLinked: "(연결 안 함)",
   xCoord: "X 좌표",
   yCoord: "Y 좌표",

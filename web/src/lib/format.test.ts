@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { csvCell, fillRatio, formatImportCsv, isActive, isVisible, rotationDegrees, shouldBeep } from "./format";
+import { csvCell, fillRatio, formatImportCsv, isActive, isVisible, moveOffset, rotationDegrees, shouldBeep } from "./format";
 import type { ImportReport } from "./types";
 
 const report = (over: Partial<ImportReport> = {}): ImportReport => ({
@@ -107,5 +107,17 @@ describe("rotationDegrees", () => {
     expect(rotationDegrees("x", "good")).toBe(0);
     expect(rotationDegrees(null, "good")).toBe(0);
     expect(rotationDegrees(45, "bad")).toBe(0);
+  });
+});
+
+describe("moveOffset", () => {
+  it("clamps the x offset", () => {
+    expect(moveOffset(30, "good")).toBe(30);
+    expect(moveOffset(1000, "good")).toBe(500);
+    expect(moveOffset(-1000, "good")).toBe(-500);
+    expect(moveOffset(true, "good")).toBe(50);
+    expect(moveOffset(false, "good")).toBe(0);
+    expect(moveOffset("x", "good")).toBe(0);
+    expect(moveOffset(30, "bad")).toBe(0);
   });
 });

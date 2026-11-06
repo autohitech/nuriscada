@@ -143,6 +143,7 @@ export interface GraphicWidgetSpec {
   tag: string | null;
   visible_tag: string | null;
   rotate_tag: string | null;
+  move_tag: string | null;
   x: number;
   y: number;
   width: number;

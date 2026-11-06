@@ -615,3 +615,31 @@ height = 120.0
     let bad = base.replace("rotate_tag = \"TANK_LEVEL\"", "rotate_tag = \"MISSING\"");
     assert!(err(&bad).contains("회전 태그"));
 }
+
+#[test]
+fn 위젯_이동_조건을_읽고_다시_쓴다() {
+    let base = format!(
+        r#"{GOOD}
+[[screen]]
+name = "s"
+width = 800
+height = 480
+
+[[screen.widget]]
+id = "m1"
+kind = "value"
+tag = "TANK_LEVEL"
+move_tag = "PUMP_RUN"
+x = 10.0
+y = 10.0
+width = 160.0
+height = 120.0
+"#
+    );
+    let p = Project::from_toml(&base).unwrap();
+    assert_eq!(p.screens[0].widgets[0].move_tag.as_deref(), Some("PUMP_RUN"));
+    let reparsed = Project::from_toml(&p.to_toml()).unwrap();
+    assert_eq!(p, reparsed);
+    let bad = base.replace("move_tag = \"PUMP_RUN\"", "move_tag = \"MISSING\"");
+    assert!(err(&bad).contains("이동 태그"));
+}

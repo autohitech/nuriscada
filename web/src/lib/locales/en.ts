@@ -293,6 +293,7 @@ export const en: Messages = {
   linkedTag: "Linked tag",
   visibilityTag: "Visibility condition tag",
   rotateTag: "Rotation angle tag",
+  moveTag: "Move tag (x offset)",
   notLinked: "(not linked)",
   xCoord: "X position",
   yCoord: "Y position",

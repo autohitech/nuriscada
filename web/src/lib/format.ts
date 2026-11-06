@@ -103,6 +103,13 @@ export function rotationDegrees(value: boolean | number | string | null, quality
   if (value === true) return 90;
   return 0;
 }
+/** x 이동 오프셋(px). 숫자는 ±500으로 자르고, 참은 +50이다. 통신 불량이면 0이다. */
+export function moveOffset(value: boolean | number | string | null, quality: "good" | "bad"): number {
+  if (quality !== "good") return 0;
+  if (typeof value === "number") return Math.max(-500, Math.min(500, value));
+  if (value === true) return 50;
+  return 0;
+}
 /** RFC 4180 인용 규칙으로 한 셀을 감싼다. */
 export function csvCell(text: string): string {
   if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;

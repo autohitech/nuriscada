@@ -565,6 +565,9 @@ pub struct GraphicWidgetSpec {
     /// 회전 각도 태그 이름(선택). 숫자면 도 단위, 참이면 90도다.
     #[serde(default)]
     pub rotate_tag: Option<String>,
+    /// 이동 태그 이름(선택). 숫자면 x 오프셋(px, ±500으로 자른다), 참이면 +50이다.
+    #[serde(default)]
+    pub move_tag: Option<String>,
     /// X 좌표.
     pub x: f64,
     /// Y 좌표.
@@ -1044,6 +1047,7 @@ impl Project {
                 w.tag = check_tag_ref(&wl, &tag_names, w.tag.take(), "태그")?;
                 w.visible_tag = check_tag_ref(&wl, &tag_names, w.visible_tag.take(), "가시성 태그")?;
                 w.rotate_tag = check_tag_ref(&wl, &tag_names, w.rotate_tag.take(), "회전 태그")?;
+                w.move_tag = check_tag_ref(&wl, &tag_names, w.move_tag.take(), "이동 태그")?;
             }
             screens.push(s);
         }
@@ -1298,6 +1302,9 @@ impl Project {
                 }
                 if let Some(tag) = &w.rotate_tag {
                     out.push_str(&format!("rotate_tag = {}\n", toml_str(tag)));
+                }
+                if let Some(tag) = &w.move_tag {
+                    out.push_str(&format!("move_tag = {}\n", toml_str(tag)));
                 }
                 out.push_str(&format!("x = {}\n", toml_f64(w.x)));
                 out.push_str(&format!("y = {}\n", toml_f64(w.y)));
