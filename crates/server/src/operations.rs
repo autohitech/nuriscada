@@ -904,4 +904,32 @@ mod history_tests {
         assert_eq!(history.len(), 1);
         assert_eq!(history[0]["time_ms"], serde_json::json!(at));
     }
+    #[test]
+    fn 쓰기_거부에도_저장은_오류를_돌려주고_멈추지_않는다() {
+        // 디스크 가득·읽기 전용 마운트에서 쓰기가 거부돼도 패닉 없이 오류를 돌려준다.
+        use nuriscada_scheduler::AlarmRecord;
+        let ops = Operations::open(
+            Path::new(":memory:"),
+            Arc::new(Project::from_toml("").unwrap()),
+            false,
+        )
+        .unwrap();
+        ops.db
+            .lock()
+            .unwrap()
+            .execute_batch("PRAGMA query_only = ON")
+            .unwrap();
+        assert!(ops.save_tag_samples(&[snapshot("N", Some(TagValue::Number(1.0)))]).is_err());
+        assert!(ops
+            .save_alarms(&[AlarmRecord {
+                seq: 1,
+                time_ms: 1,
+                tag: "N".into(),
+                event: "HIHI",
+                value: 1.0,
+            }])
+            .is_err());
+        // 읽기(감사 조회)는 계속 된다.
+        assert!(ops.audit_page(0).is_ok());
+    }
 }
