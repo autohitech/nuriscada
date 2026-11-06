@@ -329,7 +329,7 @@
           </form>
           {#if batchResults}
             <div class="audit">
-              {#each batchResults as r (r.name)}<p><strong>{r.name}</strong> · {m.batchOutcome(r.outcome)}</p>{/each}
+              {#each batchResults as r, i (i)}<p><strong>{r.name}</strong> · {m.batchOutcome(r.outcome)}</p>{/each}
             </div>
           {/if}
         {/if}
