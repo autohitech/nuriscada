@@ -645,6 +645,38 @@ async fn execute_single(
     }
 }
 
+/// 인터록 조건을 검사한다. 모두 만족하면 `None`, 처음 어긴 조건의 설명을 돌려준다.
+/// 조건 태그가 없거나 품질이 나쁘면 조건 불충족으로 본다(닫힘 실패).
+fn check_interlock(
+    project: &nuriscada_project::Project,
+    hub_tags: &[nuriscada_scheduler::TagSnapshot],
+    tag: &nuriscada_project::Tag,
+) -> Option<String> {
+    use nuriscada_project::InterlockValue;
+    for cond in &tag.interlocks {
+        let name = &project.tags[cond.tag].name;
+        let current = hub_tags.iter().find(|t| t.name == *name);
+        let met = match current {
+            Some(cur) if cur.quality == nuriscada_scheduler::Quality::Good => match (&cond.value,
+                &cur.value,
+            ) {
+                (InterlockValue::Bool(want), Some(nuriscada_scheduler::TagValue::Bool(have))) => {
+                    want == have
+                }
+                (InterlockValue::Int(want), Some(nuriscada_scheduler::TagValue::Number(have))) => {
+                    *want as f64 == *have
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if !met {
+            return Some(format!("{name} 조건 불충족"));
+        }
+    }
+    None
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct WriteValue {
@@ -709,6 +741,23 @@ pub(super) async fn write_tag(
         .ok_or_else(|| error(StatusCode::NOT_FOUND, Code::TagNotFound))?;
     if current.quality != Quality::Good {
         return Err(error(StatusCode::CONFLICT, Code::WriteBadQuality));
+    }
+    let hub_tags = state.hub.tags();
+    if let Some(reason) = check_interlock(&project, &hub_tags, &tag) {
+        audit_write(
+            &ops,
+            user.username.clone(),
+            peer.source.clone(),
+            "write.denied",
+            name.clone(),
+            json!({"requested":input.value,"reason":reason}),
+        )
+        .await?;
+        return Err(error_detail(
+            StatusCode::FORBIDDEN,
+            Code::WriteInterlocked,
+            &reason,
+        ));
     }
     let old = serde_json::to_value(current.value).map_err(internal)?;
     let requested = input.value.clone();
@@ -951,6 +1000,19 @@ pub(super) async fn write_batch(
         };
         if current.quality != Quality::Good {
             results.push(json!({"name":w.name,"outcome":"bad_quality"}));
+            continue;
+        }
+        if let Some(reason) = check_interlock(&project, &hub_tags, &tag) {
+            audit_write(
+                &ops,
+                user.username.clone(),
+                peer.source.clone(),
+                "write.denied",
+                w.name.clone(),
+                json!({"requested":w.value,"reason":reason}),
+            )
+            .await?;
+            results.push(json!({"name":w.name,"outcome":"interlocked"}));
             continue;
         }
         let old = serde_json::to_value(current.value.clone()).map_err(internal)?;
