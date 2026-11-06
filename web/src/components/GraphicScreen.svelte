@@ -899,6 +899,11 @@
   .graphic-workspace.with-inspector {
     grid-template-columns: minmax(0, 1fr) 260px;
   }
+  @media (max-width: 700px) {
+    .graphic-workspace.with-inspector {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
   .canvas-wrap {
     padding: 10px 14px;
     overflow: auto;
