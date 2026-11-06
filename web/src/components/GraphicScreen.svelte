@@ -408,7 +408,7 @@
   function widgetStroke(tag: TagSnapshot | undefined, isSelected: boolean): string {
     if (isSelected) return "var(--accent, #4ea1ff)";
     if (!tag) return "var(--border)";
-    if (tag.quality === "bad") return "var(--warn, #e5a100)";
+    if (tag.quality === "bad") return "var(--bad)";
     if (tag.alarm_state && tag.alarm_state !== "NORMAL") return "var(--critical)";
     return "var(--border)";
   }
@@ -545,7 +545,7 @@
                 y="20"
                 text-anchor="end"
                 fill={tag.quality === "bad"
-                  ? "var(--warn, #e5a100)"
+                  ? "var(--bad)"
                   : tag.alarm_state && tag.alarm_state !== "NORMAL"
                     ? "var(--critical)"
                     : "var(--muted)"}
@@ -626,7 +626,7 @@
               >
                 {tag ? `${formatValue(tag.value)} ${tag.unit_text}`.trim() : "--"}
               </text>
-            {:else if w.kind === "pump" || w.kind === "valve"}
+            {:else if w.kind === "pump" || w.kind === "valve" || w.kind === "motor"}
               {@const cx = w.width / 2}
               {@const cy = w.height / 2 + 2}
               {#if w.kind === "pump"}
@@ -643,6 +643,26 @@
                   points={`${cx - 8},${cy - 10} ${cx + 12},${cy} ${cx - 8},${cy + 10}`}
                   fill={active ? "var(--ok, #22c55e)" : "var(--muted)"}
                 />
+              {:else if w.kind === "motor"}
+                <circle
+                  cx={cx}
+                  cy={cy}
+                  r="22"
+                  fill={active ? "var(--ok, #22c55e)" : "var(--surface-2)"}
+                  fill-opacity={active ? "0.28" : "1"}
+                  stroke={active ? "var(--ok, #22c55e)" : "var(--muted)"}
+                  stroke-width="2"
+                />
+                <text
+                  x={cx}
+                  y={cy + 7}
+                  text-anchor="middle"
+                  fill={active ? "var(--ok, #22c55e)" : "var(--muted)"}
+                  font-size="20"
+                  font-weight="700"
+                >
+                  M
+                </text>
               {:else}
                 <polygon
                   points={`${cx - 22},${cy - 14} ${cx},${cy} ${cx - 22},${cy + 14} ${cx + 22},${cy - 14} ${cx},${cy} ${cx + 22},${cy + 14}`}
@@ -659,7 +679,7 @@
                 font-size="12"
                 font-weight="600"
               >
-                {active ? m.pumpOn : m.pumpOff}
+                {w.kind === "motor" ? (active ? m.motorOn : m.motorOff) : active ? m.pumpOn : m.pumpOff}
               </text>
             {:else if w.kind === "lamp"}
               {@const cx = w.width / 2}
@@ -740,6 +760,7 @@
               <option value="tank">{m.widgetKind.tank}</option>
               <option value="gauge">{m.widgetKind.gauge}</option>
               <option value="pump">{m.widgetKind.pump}</option>
+              <option value="motor">{m.widgetKind.motor}</option>
               <option value="valve">{m.widgetKind.valve}</option>
               <option value="lamp">{m.widgetKind.lamp}</option>
               <option value="value">{m.widgetKind.value}</option>

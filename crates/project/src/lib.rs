@@ -995,7 +995,7 @@ impl Project {
                 }
                 if !matches!(
                     w.kind.as_str(),
-                    "value" | "gauge" | "tank" | "lamp" | "pump" | "valve" | "label"
+                    "value" | "gauge" | "tank" | "lamp" | "pump" | "valve" | "motor" | "label"
                 ) {
                     return invalid(format!(
                         "화면 `{}` 위젯 `{}`: 지원하지 않는 kind `{}`",

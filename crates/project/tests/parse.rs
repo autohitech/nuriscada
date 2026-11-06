@@ -559,3 +559,28 @@ max = 100.0
     let bad = with_visibility.replace("visible_tag = \"PUMP_RUN\"", "visible_tag = \"MISSING\"");
     assert!(err(&bad).contains("가시성"));
 }
+
+#[test]
+fn 모터_위젯을_받아들이고_모르는_kind는_거부한다() {
+    let base = format!(
+        r#"{GOOD}
+[[screen]]
+name = "s"
+width = 800
+height = 480
+
+[[screen.widget]]
+id = "m1"
+kind = "motor"
+tag = "PUMP_RUN"
+x = 10.0
+y = 10.0
+width = 160.0
+height = 120.0
+"#
+    );
+    let p = Project::from_toml(&base).unwrap();
+    assert_eq!(p.screens[0].widgets[0].kind, "motor");
+    let bad = base.replace("kind = \"motor\"", "kind = \"robot\"");
+    assert!(err(&bad).contains("지원하지 않는 kind"));
+}
