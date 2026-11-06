@@ -61,6 +61,26 @@
   let batchResults = $state<{ name: string; outcome: string }[] | null>(null);
   let pendingBatch = $state<{ name: string; value: number | boolean }[] | null>(null);
   let tagFilterText = $state("");
+  const DRAFT_KEY = "nuriscada.project-draft";
+  let draftNotice = $state(false);
+  function readDraft(): ProjectSpec | null {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw) as { spec?: ProjectSpec };
+      return data.spec ?? null;
+    } catch {
+      return null;
+    }
+  }
+  function clearDraft(): void {
+    try {
+      localStorage.removeItem(DRAFT_KEY);
+    } catch {
+      // 저장소를 쓸 수 없으면 무시한다.
+    }
+    draftNotice = false;
+  }
   const projectHistory = new UndoStack<ProjectSpec>(50);
   let projectUndoDepth = $state(0);
   let projectRedoDepth = $state(0);
@@ -156,6 +176,8 @@
     projectHistory.clear();
     selectedTags = [];
     syncProjectHistory();
+    const draft = readDraft();
+    draftNotice = draft !== null && JSON.stringify(draft) !== JSON.stringify(res.project);
   }
   function addDevice() {
     if (!projectSpec) return;
@@ -245,9 +267,29 @@
     const res = await request("project", projectSpec) as { project: ProjectSpec; toml: string };
     projectSpec = res.project;
     projectToml = res.toml;
+    clearDraft();
     await refresh();
-    message = m.projectSaved;
   }
+  function restoreDraft(): void {
+    const draft = readDraft();
+    if (!draft || !projectSpec) return;
+    commitProject();
+    projectSpec = draft;
+    selectedTags = [];
+    draftNotice = false;
+  }
+  $effect(() => {
+    const snap = projectSpec === null ? null : $state.snapshot(projectSpec);
+    if (snap === null) return;
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ spec: snap }));
+      } catch {
+        // 저장소를 쓸 수 없으면 무시한다.
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  });
 
   async function runImport() {
     const body: Record<string, unknown> = {
@@ -440,6 +482,13 @@
             <button type="button" disabled={busy || projectRedoDepth === 0} onclick={redoProject} title="Ctrl+Shift+Z">{m.redoEdit}</button>
           {/if}
         </div>
+        {#if draftNotice && projectSpec}
+          <div class="inline">
+            <span>{m.draftFound}</span>
+            <button type="button" disabled={busy} onclick={restoreDraft}>{m.draftRestore}</button>
+            <button type="button" disabled={busy} onclick={clearDraft}>{m.draftDiscard}</button>
+          </div>
+        {/if}
         {#if projectSpec}
           <div class="editor-block">
             <div class="inline">
