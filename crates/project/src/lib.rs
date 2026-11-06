@@ -920,7 +920,10 @@ impl Project {
                 }
             };
             if !t.interlock.is_empty() && !t.writable {
-                return invalid(format!("태그 `{}`: 인터록은 쓰기 허용 태그에만 둔다", t.name));
+                return invalid(format!(
+                    "태그 `{}`: 인터록은 쓰기 허용 태그에만 둔다",
+                    t.name
+                ));
             }
             let mut interlocks = Vec::new();
             for cond in &t.interlock {

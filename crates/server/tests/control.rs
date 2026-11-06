@@ -1521,3 +1521,129 @@ scale={{plc_base=0,plc_full=100,base=0,full=1000}}
     assert_eq!(sim.state().holding_registers[11], 22);
     // 묶음 횟수 대신 값으로 확인한다. 묶음 계획 자체는 plan_batch_steps 단위 시험이 보장한다.
 }
+
+#[tokio::test]
+async fn interlock_조건이_안_맞으면_쓰기를_막고_맞으면_보낸다() {
+    let sim = Simulator::start("127.0.0.1:0", 200).await.unwrap();
+    let project = Arc::new(
+        Project::from_toml(&format!(
+            r#"
+[[device]]
+name="sim"
+driver="modbus-tcp"
+address="{}"
+scan_ms=20
+[[tag]]
+name="READY"
+device="sim"
+space="coil"
+address=0
+type="digital"
+writable=true
+[[tag]]
+name="MOTOR"
+device="sim"
+space="coil"
+address=1
+type="digital"
+writable=true
+[[tag.interlock]]
+tag="READY"
+value=true
+"#,
+            sim.addr()
+        ))
+        .unwrap(),
+    );
+    let ops = Operations::open_with_mode(
+        std::path::Path::new(":memory:"),
+        project.clone(),
+        true,
+        false,
+    )
+    .unwrap();
+    ops.create_user("operator", PASSWORD, Role::Operator, false, "cli", "cli")
+        .unwrap();
+    let hub = Hub::new(&project);
+    let archive = ops.start_archive(hub.clone());
+    let scanners = start_scanners(&project, &hub);
+    ops.attach_scanners(scanners).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router_with_operations(hub, addr, None, ops.clone());
+    let _task = tokio::spawn(async move {
+        let _archive = archive;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let cookie = login_at(addr, false, "operator").await;
+    for _ in 0..50 {
+        let (_, _, tags) = request(addr, "GET", "/api/v1/tags", &cookie, json!({}), "").await;
+        let good = tags["tags"]
+            .as_array()
+            .map(|ts| {
+                ts.iter()
+                    .all(|t| t.get("quality").and_then(|q| q.as_str()) == Some("good"))
+            })
+            .unwrap_or(false);
+        if good {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let hdr = "X-NuriScada-Request: 1\r\n";
+    // READY=false이므로 MOTOR 쓰기는 403 write.interlocked.
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/MOTOR",
+        &cookie,
+        json!({"value": true}),
+        hdr,
+    )
+    .await;
+    assert_eq!(code, 403, "{body}");
+    assert_eq!(body["code"], "write.interlocked");
+    assert!(!sim.state().coils[1]);
+    // 묶음 쓰기에서도 항목별 결과는 interlocked.
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/batch",
+        &cookie,
+        json!({"writes": [{"name": "MOTOR", "value": true}]}),
+        hdr,
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["results"][0]["outcome"], "interlocked");
+    assert!(!sim.state().coils[1]);
+    // 조건을 만족시키면 쓰기가 닿는다.
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/READY",
+        &cookie,
+        json!({"value": true}),
+        hdr,
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/MOTOR",
+        &cookie,
+        json!({"value": true}),
+        hdr,
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    assert!(sim.state().coils[1]);
+}

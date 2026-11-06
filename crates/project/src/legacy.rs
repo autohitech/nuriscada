@@ -856,7 +856,7 @@ pub fn import_legacy_text(
                     value: Some(text_value),
                     length: None,
                     swap_bytes: false,
-                        interlock: Vec::new(),
+                    interlock: Vec::new(),
                 });
                 imported_tags += 1;
             }

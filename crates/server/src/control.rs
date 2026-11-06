@@ -657,17 +657,19 @@ fn check_interlock(
         let name = &project.tags[cond.tag].name;
         let current = hub_tags.iter().find(|t| t.name == *name);
         let met = match current {
-            Some(cur) if cur.quality == nuriscada_scheduler::Quality::Good => match (&cond.value,
-                &cur.value,
-            ) {
-                (InterlockValue::Bool(want), Some(nuriscada_scheduler::TagValue::Bool(have))) => {
-                    want == have
+            Some(cur) if cur.quality == nuriscada_scheduler::Quality::Good => {
+                match (&cond.value, &cur.value) {
+                    (
+                        InterlockValue::Bool(want),
+                        Some(nuriscada_scheduler::TagValue::Bool(have)),
+                    ) => want == have,
+                    (
+                        InterlockValue::Int(want),
+                        Some(nuriscada_scheduler::TagValue::Number(have)),
+                    ) => *want as f64 == *have,
+                    _ => false,
                 }
-                (InterlockValue::Int(want), Some(nuriscada_scheduler::TagValue::Number(have))) => {
-                    *want as f64 == *have
-                }
-                _ => false,
-            },
+            }
             _ => false,
         };
         if !met {
@@ -1167,6 +1169,7 @@ mod tests {
                 space,
                 address,
                 body: TagBody::Digital { alarm_kind: None },
+                interlocks: Vec::new(),
             },
             raw: 0,
             requested: Value::Null,
