@@ -3,6 +3,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { AlarmRecord, DeviceSpec, ImportReport, ProjectSpec, TagHistorySample, TagSpec } from "../lib/types";
+  import { UndoStack } from "../lib/undo-stack";
   import { formatDateTime, formatImportCsv, formatTime } from "../lib/format";
   import { eventLabel, m } from "../lib/i18n.svelte";
   import { apiErrorMessage } from "../lib/api";
@@ -27,6 +28,37 @@
   let batchResults = $state<{ name: string; outcome: string }[] | null>(null);
   let pendingBatch = $state<{ name: string; value: number | boolean }[] | null>(null);
   let tagFilterText = $state("");
+  const projectHistory = new UndoStack<ProjectSpec>(50);
+  let projectUndoDepth = $state(0);
+  let projectRedoDepth = $state(0);
+  function syncProjectHistory(): void {
+    projectUndoDepth = projectHistory.undoDepth;
+    projectRedoDepth = projectHistory.redoDepth;
+  }
+  function snapshotProject(): ProjectSpec | null {
+    return projectSpec === null ? null : $state.snapshot(projectSpec);
+  }
+  function commitProject(): void {
+    const snap = snapshotProject();
+    if (snap) projectHistory.commit(snap);
+    syncProjectHistory();
+  }
+  function undoProject(): void {
+    const current = snapshotProject();
+    if (!current) return;
+    const prev = projectHistory.undo(current);
+    if (!prev) return;
+    projectSpec = prev;
+    syncProjectHistory();
+  }
+  function redoProject(): void {
+    const current = snapshotProject();
+    if (!current) return;
+    const next = projectHistory.redo(current);
+    if (!next) return;
+    projectSpec = next;
+    syncProjectHistory();
+  }
   let events = $state<{ seq: number; event: { time_ms: number; actor: string; source: string; action: string; target: string; detail: unknown } }[]>([]);
   let newName = $state("");
   let newPassword = $state("");
@@ -86,10 +118,12 @@
     for (const t of res.project.tag) t.interlock ??= [];
     projectSpec = res.project;
     projectToml = res.toml;
+    projectHistory.clear();
+    syncProjectHistory();
   }
-
   function addDevice() {
     if (!projectSpec) return;
+    commitProject();
     const idx = projectSpec.device.length + 1;
     const dev: DeviceSpec = { name: `dev${idx}`, driver: "modbus-tcp", address: "127.0.0.1:5020", timeout_ms: 500, scan_ms: 100 };
     projectSpec.device = [...projectSpec.device, dev];
@@ -97,12 +131,14 @@
 
   function removeDevice(index: number) {
     if (!projectSpec) return;
+    commitProject();
     projectSpec.device = projectSpec.device.filter((_, i) => i !== index);
   }
 
   function addTag() {
     if (!projectSpec) return;
     const idx = projectSpec.tag.length + 1;
+    commitProject();
     const defaultDev = projectSpec.device[0]?.name ?? "sim";
     const tag: TagSpec = {
       name: `TAG_${idx}`,
@@ -125,6 +161,7 @@
 
   function removeTag(index: number) {
     if (!projectSpec) return;
+    commitProject();
     projectSpec.tag = projectSpec.tag.filter((_, i) => i !== index);
   }
 
@@ -357,6 +394,8 @@
             <button type="button" disabled={busy} onclick={addDevice}>{m.addDevice}</button>
             <button type="button" disabled={busy} onclick={addTag}>{m.addTag}</button>
             <button type="button" disabled={busy} onclick={() => void perform(saveProject)}>{m.saveApply}</button>
+            <button type="button" disabled={busy || projectUndoDepth === 0} onclick={undoProject} title="Ctrl+Z">{m.undoEdit}</button>
+            <button type="button" disabled={busy || projectRedoDepth === 0} onclick={redoProject} title="Ctrl+Shift+Z">{m.redoEdit}</button>
           {/if}
         </div>
         {#if projectSpec}
