@@ -51,6 +51,8 @@ export const en: Messages = {
   viewSplit: "Graphics + tag table",
   viewGraphic: "Graphics only",
   viewTable: "Tag table only",
+  kiosk: "Kiosk fullscreen",
+  exitKiosk: "Exit fullscreen",
   loginToSee: "Sign in to see live values and alarms.",
   alarmState: {
     NORMAL: "Normal",

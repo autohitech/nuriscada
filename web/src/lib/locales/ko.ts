@@ -52,6 +52,8 @@ export const ko = {
   viewSplit: "그래픽 + 태그 표",
   viewGraphic: "그래픽 화면만",
   viewTable: "태그 표만",
+  kiosk: "키오스크 전체 화면",
+  exitKiosk: "전체 화면 끝내기",
   loginToSee: "로그인하면 실시간 값과 알람을 볼 수 있습니다.",
   alarmState: {
     NORMAL: "정상",

@@ -17,6 +17,19 @@
   const store = new Store();
   let session = $state<SessionDoc | null>(null);
   let viewMode = $state<"split" | "graphic" | "table">("split");
+  let kiosk = $state(false);
+  function toggleKiosk(): void {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+    } else {
+      void document.documentElement.requestFullscreen().catch(() => {});
+    }
+  }
+  $effect(() => {
+    const sync = () => { kiosk = document.fullscreenElement !== null; };
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  });
   const canRead = $derived(!!session && (!session.authentication_required || !!session.user));
   const canEditGraphic = $derived(
     !!session && !!session.local_management && session.user?.role === "admin"
@@ -68,6 +81,7 @@
         <button type="button" class:active={viewMode === "split"} onclick={() => viewMode = "split"}>{m.viewSplit}</button>
         <button type="button" class:active={viewMode === "graphic"} onclick={() => viewMode = "graphic"}>{m.viewGraphic}</button>
         <button type="button" class:active={viewMode === "table"} onclick={() => viewMode = "table"}>{m.viewTable}</button>
+        <button type="button" class:active={kiosk} onclick={toggleKiosk}>{kiosk ? m.exitKiosk : m.kiosk}</button>
       </div>
       {#if viewMode !== "table"}
         <GraphicScreen {store} canEdit={canEditGraphic} />
