@@ -116,15 +116,18 @@ impl FinsTcpClient {
                 start: address,
                 values: vec![value],
             },
-            SPACE_CIO => {
+            SPACE_CIO | SPACE_WR | SPACE_HR => {
                 if value > 1 {
                     return Err(DriverError::InvalidRequest(format!(
-                        "CIO 비트 값 {value}는 0 또는 1이어야 한다"
+                        "비트 값 {value}는 0 또는 1이어야 한다"
                     )));
                 }
-                WriteRequest::CioBits {
-                    start_bit: u32::from(address),
-                    values: vec![value == 1],
+                let start_bit = u32::from(address);
+                let values = vec![value == 1];
+                match space {
+                    SPACE_CIO => WriteRequest::CioBits { start_bit, values },
+                    SPACE_WR => WriteRequest::WrBits { start_bit, values },
+                    _ => WriteRequest::HrBits { start_bit, values },
                 }
             }
             _ => {

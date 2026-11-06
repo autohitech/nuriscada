@@ -3,7 +3,7 @@
 
 //! 시험용 FINS/TCP 시뮬레이터. 개발·CI 전용이며 배포물에 포함하지 않는다.
 //!
-//! 노드 주소 교환(명령 0/1)과 메모리 영역 읽기(0101, DM 워드·CIO/WR/HR 비트)·쓰기(0102, DM 워드·CIO 비트)를 지원한다.
+//! 노드 주소 교환(명령 0/1)과 메모리 영역 읽기(0101, DM 워드·CIO/WR/HR 비트)·쓰기(0102, DM 워드·CIO/WR/HR 비트)를 지원한다.
 //! 실행 중에 메모리 값을 바꾸거나 응답을 늦추고 끊을 수 있어서
 //! 드라이버와 스케줄러의 시험에 쓴다.
 
@@ -263,15 +263,20 @@ fn respond_write(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
                 state.dm[addr + i] = u16::from_be_bytes([pair[0], pair[1]]);
             }
         }
-        0x30 => {
+        0x30..=0x32 => {
             if bit > 15 {
                 return Some(error_response(0x0104, 0x02));
             }
             if frame.len() != 16 + 18 + count {
                 return Some(error_response(0x0401, 0x02));
             }
+            let bank: &mut Vec<u16> = match area {
+                0x30 => &mut state.cio,
+                0x31 => &mut state.wr,
+                _ => &mut state.hr,
+            };
             let start_bit = addr * 16 + usize::from(bit);
-            if start_bit + count > state.cio.len() * 16 {
+            if start_bit + count > bank.len() * 16 {
                 return Some(error_response(0x0104, 0x02));
             }
             for (i, &raw) in frame[34..34 + count].iter().enumerate() {
@@ -279,7 +284,7 @@ fn respond_write(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
                     return Some(error_response(0x0203, 0x02));
                 }
                 let total_bit = start_bit + i;
-                let slot = &mut state.cio[total_bit / 16];
+                let slot = &mut bank[total_bit / 16];
                 if raw == 1 {
                     *slot |= 1 << (total_bit % 16);
                 } else {

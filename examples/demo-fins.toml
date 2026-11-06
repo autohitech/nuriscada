@@ -2,7 +2,7 @@
 #   cargo run -p nuriscada-sim-fins -- --demo
 #   cargo run -p nuriscada-server -- --config examples/demo-fins.toml --init-admin admin
 #   cargo run -p nuriscada-server -- --config examples/demo-fins.toml --enable-writes
-# 쓰기는 dm 영역만 허용한다. cio 주소는 비트 번호다(워드×16 + 비트, CIO 1.00 = 16).
+# 쓰기는 dm·cio·wr·hr 영역에 허용한다. cio·wr·hr 주소는 비트 번호다(워드×16 + 비트, CIO 1.00 = 16).
 
 [server]
 listen = "127.0.0.1:8083"

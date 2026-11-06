@@ -733,9 +733,12 @@ impl Project {
                         }
                     }
                     DriverConfig::FinsTcp { .. } => {
-                        if !matches!(space, Space::FinsDm | Space::FinsCio) {
+                        if !matches!(
+                            space,
+                            Space::FinsDm | Space::FinsCio | Space::FinsWr | Space::FinsHr
+                        ) {
                             return invalid(format!(
-                                "태그 `{}`: FINS 쓰기는 dm·cio 영역만 허용한다",
+                                "태그 `{}`: FINS 쓰기는 dm·cio·wr·hr 영역만 허용한다",
                                 t.name
                             ));
                         }
