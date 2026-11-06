@@ -185,15 +185,19 @@ impl Hub {
                     } => ("analog", unit_text.clone(), alarm.is_some(), None),
                     TagBody::Digital { .. } => ("digital", String::new(), false, None),
                     TagBody::String {
-                        unit_text, initial, ..
+                        unit_text,
+                        initial,
+                        length,
+                        ..
                     } => (
                         "string",
                         unit_text.clone(),
                         false,
-                        Some(TagValue::Text(initial.clone())),
+                        // 스캔하는 문자열은 첫 스캔까지 값이 없다.
+                        length.is_none().then(|| TagValue::Text(initial.clone())),
                     ),
                 };
-                // 문자열 태그는 스캔하지 않으므로 초기 문자열을 Good 품질로 둔다.
+                // 표시 전용 문자열은 초기 문자열을 Good 품질로 둔다.
                 let (value, quality) = match initial {
                     Some(v) => (Some(v), Quality::Good),
                     None => (None, Quality::Bad),
@@ -262,15 +266,19 @@ impl Hub {
                     } => ("analog", unit_text.clone(), alarm.is_some(), None),
                     TagBody::Digital { .. } => ("digital", String::new(), false, None),
                     TagBody::String {
-                        unit_text, initial, ..
+                        unit_text,
+                        initial,
+                        length,
+                        ..
                     } => (
                         "string",
                         unit_text.clone(),
                         false,
-                        Some(TagValue::Text(initial.clone())),
+                        // 스캔하는 문자열은 첫 스캔까지 값이 없다.
+                        length.is_none().then(|| TagValue::Text(initial.clone())),
                     ),
                 };
-                // 문자열 태그는 스캔하지 않으므로 초기 문자열을 Good 품질로 둔다.
+                // 표시 전용 문자열은 초기 문자열을 Good 품질로 둔다.
                 let (value, quality) = match initial {
                     Some(v) => (Some(v), Quality::Good),
                     None => (None, Quality::Bad),

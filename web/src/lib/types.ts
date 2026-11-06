@@ -126,6 +126,8 @@ export interface TagSpec {
   alarm: AlarmSpec | null;
   unit_text: string;
   value: string | null;
+  length: number | null;
+  swap_bytes: boolean;
 }
 
 export type GraphicWidgetKind = "value" | "gauge" | "tank" | "lamp" | "pump" | "valve" | "label";
@@ -160,8 +162,8 @@ export interface ProjectSpec {
 export interface TagHistorySample {
   id: number;
   time_ms: number;
-  kind: "analog" | "digital";
-  value: number | boolean | null;
+  kind: "analog" | "digital" | "string";
+  value: number | boolean | string | null;
   numeric: number | null;
   quality: Quality;
   alarm_state: AlarmState | null;

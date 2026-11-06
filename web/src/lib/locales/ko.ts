@@ -164,6 +164,8 @@ export const ko = {
   importCsv: "CSV 저장",
   unitText: "단위",
   tagString: "문자열",
+  stringLength: "길이(워드, 비우면 표시 전용)",
+  swapBytes: "바이트 순서 뒤집기",
   useAlarm: "알람 사용",
   removeTag: "태그 삭제",
   plcBase: "PLC 하한",

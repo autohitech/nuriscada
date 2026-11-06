@@ -721,6 +721,8 @@ pub fn import_legacy_text(
                         alarm,
                         unit_text,
                         value: None,
+                        length: None,
+                        swap_bytes: false,
                     });
                 } else {
                     let alarm = if let Some(dk) = parse_opt_u8(&fields, rest_start) {
@@ -761,6 +763,8 @@ pub fn import_legacy_text(
                         alarm,
                         unit_text: String::new(),
                         value: None,
+                        length: None,
+                        swap_bytes: false,
                     });
                 }
                 imported_tags += 1;
@@ -848,6 +852,8 @@ pub fn import_legacy_text(
                     alarm: None,
                     unit_text,
                     value: Some(text_value),
+                    length: None,
+                    swap_bytes: false,
                 });
                 imported_tags += 1;
             }

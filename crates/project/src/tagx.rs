@@ -329,6 +329,8 @@ fn build_tag(
                 alarm,
                 unit_text,
                 value: None,
+                length: None,
+                swap_bytes: false,
             })
         }
         _ => {
@@ -371,6 +373,8 @@ fn build_tag(
                 alarm,
                 unit_text: String::new(),
                 value: None,
+                length: None,
+                swap_bytes: false,
             })
         }
     }

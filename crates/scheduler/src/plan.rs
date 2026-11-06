@@ -76,7 +76,26 @@ pub fn plan_with(project: &Project, limits: impl Fn(usize) -> PlanLimits) -> Vec
     let mut blocks: Vec<PlannedBlock> = Vec::new();
     for i in order {
         let t = &project.tags[i];
-        // 문자열 태그는 스캔하지 않으므로 읽기 블록을 만들지 않는다.
+        // 스캔하는 문자열 태그는 전용 블록으로 읽는다(다른 태그와 묶지 않는다).
+        if let TagBody::String {
+            length: Some(length),
+            ..
+        } = &t.body
+        {
+            blocks.push(PlannedBlock {
+                device: t.device,
+                block: ReadBlock {
+                    unit: t.unit,
+                    space: t.space.code(),
+                    start: t.address,
+                    count: *length,
+                    kind: DataKind::Word,
+                },
+                tags: vec![(i, 0)],
+            });
+            continue;
+        }
+        // 표시 전용 문자열 태그는 스캔하지 않으므로 읽기 블록을 만들지 않는다.
         if matches!(t.body, TagBody::String { .. }) {
             continue;
         }
@@ -242,5 +261,33 @@ address = "127.0.0.1:2"
             .concat(),
         );
         assert_eq!(plan(&apart, limits).len(), 2);
+    }
+
+    fn string(name: &str, address: u16, length: Option<u16>) -> String {
+        let mut s = format!(
+            "[[tag]]\nname=\"{name}\"\ndevice=\"a\"\nspace=\"holding\"\naddress={address}\ntype=\"string\"\n"
+        );
+        if let Some(n) = length {
+            s.push_str(&format!("length = {n}\n"));
+        }
+        s
+    }
+
+    #[test]
+    fn string_with_length_gets_own_block() {
+        let p = project(
+            &[
+                analog("t", "a", "holding", 10),
+                string("s", 12, Some(4)),
+                string("d", 20, None),
+            ]
+            .concat(),
+        );
+        let blocks = plan(&p, PlanLimits::MODBUS);
+        // 문자열 전용 블록 1개 + 아날로그 1개. 표시 전용은 블록이 없다.
+        assert_eq!(blocks.len(), 2);
+        let s = blocks.iter().find(|b| b.block.count == 4).unwrap();
+        assert_eq!(s.block.start, 12);
+        assert_eq!(s.tags.len(), 1);
     }
 }

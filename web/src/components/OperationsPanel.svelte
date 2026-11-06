@@ -109,6 +109,8 @@
       type: "analog",
       unit_text: "",
       value: null,
+      length: null,
+      swap_bytes: false,
       scale: { plc_base: 0, plc_full: 100, base: 0, full: 100, profile: 0, delay: 0, range: 0 },
       alarm: null,
     };
@@ -137,6 +139,9 @@
       tag.alarm = null;
       tag.writable = false;
       if (tag.value === null) tag.value = "";
+      if (tag.space === "coil" || tag.space === "discrete") tag.space = "holding";
+      if (tag.length === undefined) tag.length = null;
+      if (tag.swap_bytes === undefined) tag.swap_bytes = false;
     }
   }
 
@@ -343,6 +348,8 @@
                   {/if}
                   {#if tag.type === "string"}
                     <label>{m.tagString} <input bind:value={tag.value} /></label>
+                    <label>{m.stringLength} <input type="number" min="1" max="32" value={tag.length ?? ""} onchange={(e) => { const v = (e.currentTarget as HTMLInputElement).value; tag.length = v === "" ? null : Number(v); }} /></label>
+                    <label class="checkbox-label"><input type="checkbox" bind:checked={tag.swap_bytes} /> {m.swapBytes}</label>
                   {/if}
                   {#if tag.type !== "string"}
                     <label class="checkbox-label"><input type="checkbox" checked={tag.alarm !== null} onchange={(e) => toggleTagAlarm(tag, (e.currentTarget as HTMLInputElement).checked)} /> {m.useAlarm}</label>

@@ -21,6 +21,29 @@ enum Slot {
     Digital {
         alarm: Option<DigitalAlarm>,
     },
+    Text {
+        length: u16,
+        swap: bool,
+    },
+}
+
+/// 워드 배열을 문자열로 푼다. 워드 안 바이트 순서를 뒤집을 수 있고,
+/// UTF-8이 아니면 손실 문자로 바꾸며 끝의 NUL·공백을 뗀다.
+pub fn decode_text(words: &[u16], swap: bool) -> String {
+    let mut bytes = Vec::with_capacity(words.len() * 2);
+    for &w in words {
+        let [hi, lo] = w.to_be_bytes();
+        if swap {
+            bytes.push(lo);
+            bytes.push(hi);
+        } else {
+            bytes.push(hi);
+            bytes.push(lo);
+        }
+    }
+    String::from_utf8_lossy(&bytes)
+        .trim_end_matches(['\0', ' '])
+        .to_string()
 }
 
 /// 장치 하나가 가진 태그들의 실행 상태.
@@ -32,12 +55,9 @@ impl DeviceEngine {
     /// 프로젝트에서 `device`에 속한 태그의 상태를 만든다. 검증을 마친 프로젝트를 가정한다.
     pub fn new(project: &Project, device: usize) -> Self {
         let mut slots = HashMap::new();
-        for (i, t) in project
-            .tags
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| t.device == device && !matches!(t.body, TagBody::String { .. }))
-        {
+        for (i, t) in project.tags.iter().enumerate().filter(|(_, t)| {
+            t.device == device && !matches!(t.body, TagBody::String { length: None, .. })
+        }) {
             let slot = match &t.body {
                 TagBody::Analog { scale, alarm, .. } => Slot::Analog {
                     value: AiValue::new(*scale),
@@ -53,8 +73,16 @@ impl DeviceEngine {
                         )
                     }),
                 },
-                // 문자열 태그는 위 필터에서 제외되므로 여기에는 닿지 않는다.
-                TagBody::String { .. } => unreachable!("문자열 태그는 스캔 슬롯이 없다"),
+                TagBody::String {
+                    length: Some(length),
+                    swap_bytes,
+                    ..
+                } => Slot::Text {
+                    length: *length,
+                    swap: *swap_bytes,
+                },
+                // 표시 전용 문자열 태그는 위 필터에서 제외되므로 여기에는 닿지 않는다.
+                TagBody::String { .. } => unreachable!("표시 전용 문자열은 스캔 슬롯이 없다"),
             };
             slots.insert(i, slot);
         }
@@ -100,6 +128,14 @@ impl DeviceEngine {
                     }
                     hub.set_tag(index, Some(TagValue::Bool(bit)), Quality::Good, None);
                 }
+                (Slot::Text { length, swap }, BlockData::Words(words)) => {
+                    let length = usize::from(*length);
+                    let Some(slice) = words.get(offset..offset + length) else {
+                        continue;
+                    };
+                    let text = decode_text(slice, *swap);
+                    hub.set_tag(index, Some(TagValue::Text(text)), Quality::Good, None);
+                }
                 // 데이터 종류가 맞지 않는 블록은 반영하지 않는다(계획 단계에서 막힌다).
                 _ => {}
             }
@@ -111,5 +147,29 @@ impl DeviceEngine {
         for &(index, _) in &planned.tags {
             hub.mark_bad(index);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ascii_워드를_풀고_끝을_다듬는다() {
+        // "HELLO\0" + 패딩.
+        assert_eq!(decode_text(&[0x4845, 0x4C4C, 0x4F00], false), "HELLO");
+        assert_eq!(decode_text(&[0x4142, 0x2020], false), "AB");
+        assert_eq!(decode_text(&[], false), "");
+    }
+
+    #[test]
+    fn 바이트_순서를_뒤집을_수_있다() {
+        // 리틀엔디언 장치의 "AB".
+        assert_eq!(decode_text(&[0x4241], true), "AB");
+    }
+
+    #[test]
+    fn 깨진_utf8은_손실_문자로_바꾼다() {
+        assert_eq!(decode_text(&[0xFF41], false), "�A");
     }
 }
