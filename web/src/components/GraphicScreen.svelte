@@ -519,6 +519,7 @@
             display={!shown && !editing ? "none" : undefined}
             opacity={!shown && editing ? 0.35 : undefined}
             onpointerdown={(e) => onWidgetPointerDown(e, w)}
+            onfocus={() => { selectedWidgetId = w.id; }}
             onkeydown={(e) => {
               if (e.key === "Enter" || e.key === " ") selectedWidgetId = w.id;
             }}

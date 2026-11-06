@@ -6,6 +6,7 @@ import type { Messages } from "./ko";
 /** English UI strings. Must have exactly the same keys as the Korean base (`Messages`). */
 export const en: Messages = {
   appTitle: "NuriScada",
+  skipToContent: "Skip to content",
   language: "Language",
   connected: "Connected",
   reconnecting: "Disconnected — reconnecting",

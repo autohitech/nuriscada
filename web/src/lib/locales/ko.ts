@@ -7,6 +7,7 @@
  */
 export const ko = {
   appTitle: "NuriScada",
+  skipToContent: "본문으로 건너뛰기",
   language: "언어",
   connected: "연결됨",
   reconnecting: "연결 끊김 — 다시 연결하는 중",

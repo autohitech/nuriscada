@@ -60,9 +60,9 @@
 </script>
 
 <div class="app">
+  <a class="skip-link" href="#main-content">{m.skipToContent}</a>
   {#if canRead}<StatusBar {store} {theme} onTheme={nextTheme} />{:else}<header class="welcome">NuriScada</header>{/if}
-  <OperationsPanel onSession={(s) => session = s} />
-  {#if canRead}<main>
+  {#if canRead}<main id="main-content">
     <div class="workspace-col">
       <div class="view-mode-bar" role="toolbar" aria-label={m.viewModeAria}>
         <button type="button" class:active={viewMode === "split"} onclick={() => viewMode = "split"}>{m.viewSplit}</button>
@@ -77,7 +77,7 @@
       {/if}
     </div>
     <AlarmPanel {store} />
-  </main>{:else}<main class="welcome"><p>{m.loginToSee}</p></main>{/if}
+  </main>{:else}<main id="main-content" class="welcome"><p>{m.loginToSee}</p></main>{/if}
   <footer>{m.safetyNotice}</footer>
 </div>
 
@@ -86,6 +86,23 @@
     display: grid;
     grid-template-rows: auto auto minmax(0, 1fr) auto;
     height: 100%;
+  }
+  .skip-link {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .skip-link:focus-visible {
+    width: auto;
+    height: auto;
+    clip-path: none;
+    z-index: 100;
+    background: var(--surface);
+    color: var(--text);
+    padding: 8px 12px;
+    border: 2px solid var(--focus);
   }
   main {
     display: grid;
