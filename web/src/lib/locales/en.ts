@@ -199,6 +199,7 @@ export const en: Messages = {
   interlockConds: "Write allow conditions (AND)",
   condBool: "true/false",
   condNum: "number",
+  condStr: "text",
   removeCond: "Remove condition",
   plcBase: "PLC low",
   plcFull: "PLC high",

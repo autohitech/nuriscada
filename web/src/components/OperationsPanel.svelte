@@ -516,17 +516,20 @@
                           <option value={cand.name}>{cand.name}</option>
                         {/each}
                       </select>
-                      <select value={typeof cond.value === "boolean" ? "bool" : "num"} onchange={(e) => { const k = (e.currentTarget as HTMLSelectElement).value; cond.value = k === "bool" ? false : 0; tag.interlock = [...tag.interlock]; }}>
+                      <select value={typeof cond.value === "boolean" ? "bool" : typeof cond.value === "string" ? "str" : "num"} onchange={(e) => { const k = (e.currentTarget as HTMLSelectElement).value; cond.value = k === "bool" ? false : k === "str" ? "" : 0; tag.interlock = [...tag.interlock]; }}>
                         <option value="bool">{m.condBool}</option>
                         <option value="num">{m.condNum}</option>
+                        <option value="str">{m.condStr}</option>
                       </select>
                       {#if typeof cond.value === "boolean"}
                         <input type="checkbox" bind:checked={cond.value} />
+                      {:else if typeof cond.value === "string"}
+                        <input bind:value={cond.value} maxlength="64" />
                       {:else}
                         <input type="number" step="1" value={cond.value} onchange={(e) => { cond.value = Number((e.currentTarget as HTMLInputElement).value); tag.interlock = [...tag.interlock]; }} />
                       {/if}
                       {@const live = store.tags.find((t) => t.name === cond.tag)}
-                      <span class="muted" title={live?.quality === "bad" ? m.badQuality : ""}>→ {live ? formatValue(live.value) : "—"} {live && live.quality === "good" && ((typeof cond.value === "boolean" && typeof live.value === "boolean" && cond.value === live.value) || (typeof cond.value === "number" && typeof live.value === "number" && cond.value === live.value)) ? "✓" : "✗"}</span>
+                      <span class="muted" title={live?.quality === "bad" ? m.badQuality : ""}>→ {live ? formatValue(live.value) : "—"} {live && live.quality === "good" && ((typeof cond.value === "boolean" && typeof live.value === "boolean" && cond.value === live.value) || (typeof cond.value === "number" && typeof live.value === "number" && cond.value === live.value) || (typeof cond.value === "string" && typeof live.value === "string" && cond.value === live.value)) ? "✓" : "✗"}</span>
                       <button type="button" disabled={busy} onclick={() => { tag.interlock = tag.interlock.filter((_, j) => j !== ci); }}>{m.removeCond}</button>
                     {/each}
                     <button type="button" disabled={busy} onclick={() => { const first = (projectSpec?.tag ?? []).find((t2) => t2.name !== tag.name); if (first) tag.interlock = [...tag.interlock, { tag: first.name, value: false }]; }}>{m.addRow}</button>

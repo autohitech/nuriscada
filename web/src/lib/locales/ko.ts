@@ -202,6 +202,7 @@ export const ko = {
   interlockConds: "쓰기 허용 조건(AND)",
   condBool: "참/거짓",
   condNum: "숫자",
+  condStr: "문자열",
   removeCond: "조건 삭제",
   plcBase: "PLC 하한",
   plcFull: "PLC 상한",

@@ -689,6 +689,10 @@ fn check_interlock(
                         InterlockValue::Int(want),
                         Some(nuriscada_scheduler::TagValue::Number(have)),
                     ) => *want as f64 == *have,
+                    (
+                        InterlockValue::Text(want),
+                        Some(nuriscada_scheduler::TagValue::Text(have)),
+                    ) => want == have,
                     _ => false,
                 }
             }
@@ -1283,5 +1287,56 @@ mod tests {
                 BatchStep::Multi(vec![3, 4]),
             ]
         );
+    }
+
+    #[test]
+    fn 문자열_조건은_정확히_일치할_때만_만족한다() {
+        use nuriscada_project::Project;
+        use nuriscada_scheduler::{TagSnapshot, TagValue};
+        let project = Project::from_toml(
+            r#"
+[[device]]
+name = "sim"
+driver = "modbus-tcp"
+address = "127.0.0.1:1"
+scan_ms = 100
+
+[[tag]]
+name = "MODE"
+device = "sim"
+space = "holding"
+address = 0
+type = "string"
+value = "AUTO"
+length = 4
+
+[[tag]]
+name = "MOTOR"
+device = "sim"
+space = "coil"
+address = 1
+type = "digital"
+writable = true
+
+[[tag.interlock]]
+tag = "MODE"
+value = "AUTO"
+"#,
+        )
+        .unwrap();
+        let snap = |value: Option<TagValue>| TagSnapshot {
+            name: "MODE".to_string(),
+            device: "sim".to_string(),
+            kind: "string",
+            value,
+            quality: Quality::Good,
+            changed_ms: 1,
+            unit_text: String::new(),
+            alarm_state: None,
+        };
+        let motor = project.tags.iter().find(|t| t.name == "MOTOR").unwrap();
+        assert!(check_interlock(&project, &[snap(Some(TagValue::Text("AUTO".into())))], motor).is_none());
+        assert!(check_interlock(&project, &[snap(Some(TagValue::Text("MAN".into())))], motor).is_some());
+        assert!(check_interlock(&project, &[snap(None)], motor).is_some());
     }
 }

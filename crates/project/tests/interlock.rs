@@ -91,3 +91,32 @@ fn 아날로그_태그에_정수_조건을_둘_수_있다() {
     let p = Project::from_toml(&text).unwrap();
     assert_eq!(p.tags[1].interlocks.len(), 1);
 }
+
+#[test]
+fn 문자열_태그에_정확히_일치_조건을_둘_수_있다() {
+    let text = BASE
+        .replace(
+            "name = \"READY\"\ndevice = \"sim\"\nspace = \"coil\"\naddress = 0\ntype = \"digital\"\nwritable = true",
+            "name = \"MODE\"\ndevice = \"sim\"\nspace = \"holding\"\naddress = 5\ntype = \"string\"\nvalue = \"AUTO\"\nlength = 4",
+        )
+        .replace("tag = \"READY\"\nvalue = true", "tag = \"MODE\"\nvalue = \"AUTO\"");
+    let p = Project::from_toml(&text).unwrap();
+    assert_eq!(p.tags[1].interlocks.len(), 1);
+    let out = p.to_toml();
+    assert!(out.contains("value = \"AUTO\""), "{out}");
+    let q = Project::from_toml(&out).unwrap();
+    assert_eq!(q.tags[1].interlocks, p.tags[1].interlocks);
+}
+
+#[test]
+fn 문자열_조건의_종류가_맞지_않으면_거부한다() {
+    let text = BASE
+        .replace(
+            "name = \"READY\"\ndevice = \"sim\"\nspace = \"coil\"\naddress = 0\ntype = \"digital\"\nwritable = true",
+            "name = \"MODE\"\ndevice = \"sim\"\nspace = \"holding\"\naddress = 5\ntype = \"string\"\nvalue = \"AUTO\"\nlength = 4",
+        )
+        .replace("tag = \"READY\"\nvalue = true", "tag = \"MODE\"\nvalue = 1");
+    assert!(Project::from_toml(&text).is_err());
+    let text2 = BASE.replace("tag = \"READY\"\nvalue = true", "tag = \"READY\"\nvalue = \"x\"");
+    assert!(Project::from_toml(&text2).is_err());
+}

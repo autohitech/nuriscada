@@ -294,13 +294,15 @@ pub enum TagBody {
 }
 
 /// 인터록 조건 값.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum InterlockValue {
     /// 불리언(디지털 태그와 비교).
     Bool(bool),
     /// 정수(아날로그 태그와 비교).
     Int(i64),
+    /// 문자열(문자열 태그와 정확히 일치 비교).
+    Text(String),
 }
 
 /// 편집 명세의 인터록 조건 하나.
@@ -314,7 +316,7 @@ pub struct InterlockSpec {
 }
 
 /// 검증된 인터록 조건 하나. `tag`는 태그 목록에서의 위치다.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interlock {
     /// 조건 태그의 위치.
     pub tag: usize,
@@ -714,11 +716,11 @@ impl Project {
         let mut tags = Vec::new();
         let mut tag_names = HashSet::new();
         let all_names: Vec<String> = raw.tags.iter().map(|t| t.name.clone()).collect();
-        let mut analog_by_name = std::collections::HashMap::new();
+        let mut kind_by_name = std::collections::HashMap::new();
         for t in &raw.tags {
-            analog_by_name
+            kind_by_name
                 .entry(t.name.clone())
-                .or_insert_with(|| t.kind.as_str() == "analog");
+                .or_insert_with(|| t.kind.as_str().to_string());
         }
         for t in raw.tags {
             if t.name.trim().is_empty() {
@@ -942,10 +944,12 @@ impl Project {
                         t.name
                     ));
                 }
-                let is_analog = analog_by_name.get(&cond.tag).copied().unwrap_or(false);
+                let kind = kind_by_name.get(&cond.tag).map_or("digital", String::as_str);
                 let kind_ok = matches!(
-                    (&cond.value, is_analog),
-                    (InterlockValue::Bool(_), false) | (InterlockValue::Int(_), true)
+                    (&cond.value, kind),
+                    (InterlockValue::Bool(_), "digital")
+                        | (InterlockValue::Int(_), "analog")
+                        | (InterlockValue::Text(_), "string")
                 );
                 if !kind_ok {
                     return invalid(format!(
@@ -955,7 +959,7 @@ impl Project {
                 }
                 interlocks.push(Interlock {
                     tag: ref_idx,
-                    value: cond.value,
+                    value: cond.value.clone(),
                 });
             }
             tags.push(Tag {
@@ -1166,7 +1170,7 @@ impl Project {
                             .iter()
                             .map(|r| InterlockSpec {
                                 tag: self.tags[r.tag].name.clone(),
-                                value: r.value,
+                                value: r.value.clone(),
                             })
                             .collect(),
                     }
@@ -1256,12 +1260,15 @@ impl Project {
             for r in &t.interlock {
                 out.push_str("\n[[tag.interlock]]\n");
                 out.push_str(&format!("tag = {}\n", toml_str(&r.tag)));
-                match r.value {
+                match &r.value {
                     InterlockValue::Bool(b) => {
                         out.push_str(&format!("value = {b}\n"));
                     }
                     InterlockValue::Int(n) => {
                         out.push_str(&format!("value = {n}\n"));
+                    }
+                    InterlockValue::Text(s) => {
+                        out.push_str(&format!("value = {}\n", toml_str(s)));
                     }
                 }
             }
