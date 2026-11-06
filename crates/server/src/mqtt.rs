@@ -19,7 +19,9 @@ pub fn parse_broker(text: &str) -> Result<(String, u16, bool), String> {
         None => match text.strip_prefix("mqtts://") {
             Some(rest) => (rest, true),
             None => {
-                return Err(format!("브로커 주소는 mqtt://나 mqtts://로 시작해야 한다: {text}"));
+                return Err(format!(
+                    "브로커 주소는 mqtt://나 mqtts://로 시작해야 한다: {text}"
+                ));
             }
         },
     };
