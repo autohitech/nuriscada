@@ -267,3 +267,37 @@ fn 구형_tag_형식은_읽지못함으로_보고한다() {
     assert!(!r.unreadable_items.is_empty());
     assert!(r.ignored_items.iter().any(|n| n.item == "문자열"));
 }
+
+#[test]
+fn 모든_줄은_가져오거나_보고서에_남는다() {
+    // SQ-M02: 읽지 못한 항목·무시한 항목·값이 바뀐 항목을 빠짐없이 목록에 낸다.
+    // 빈 줄·주석을 뺀 모든 입력 줄은 가져온 태그, 무시함, 읽지 못함 중 하나에 속해야 한다.
+    let text = format!(
+        ";주석\n\n{}\nGR,G1,{}\nGDO,O1\nST,STR1,x\nXX,foo,bar\nAI,짧다\n{}\n{}\n",
+        "g,".repeat(18),
+        "g,".repeat(18),
+        ai("GOOD_A", "1", "1", "0", "0", "0", ""),
+        ai("GOOD_B", "1", "2", "0", "0", "0", ""),
+    );
+    let r = import_tagx(&base(), &text, "plc").unwrap();
+    assert_eq!(r.imported_tags, 2);
+    assert!(r.unreadable_items.iter().any(|i| i.item == "짧다"));
+    assert!(r.ignored_items.iter().any(|i| i.item == "GR"));
+    assert!(r.ignored_items.iter().any(|i| i.item == "GDO"));
+    assert!(r.ignored_items.iter().any(|i| i.item == "XX"));
+    assert!(r.ignored_items.iter().any(|i| i.item == "STR1"));
+    let accountable = text
+        .lines()
+        .filter(|l| {
+            let t = l.trim();
+            !(t.is_empty() || t.starts_with(';'))
+        })
+        .count();
+    assert_eq!(
+        r.imported_tags + r.ignored_items.len() + r.unreadable_items.len(),
+        accountable,
+        "ignored={:?} unreadable={:?}",
+        r.ignored_items,
+        r.unreadable_items
+    );
+}
