@@ -395,7 +395,9 @@ alarm = { kind = 0 }
             Arc::clone(&hub),
             project,
             0,
-            move || PanicOnce { armed: Arc::clone(&armed) },
+            move || PanicOnce {
+                armed: Arc::clone(&armed),
+            },
             blocks,
             rx,
         ));
@@ -403,7 +405,11 @@ alarm = { kind = 0 }
         let d = hub.devices()[0].clone();
         assert_eq!(d.restarts, 1, "한 번 재시작한다");
         assert!(d.last_error.is_some());
-        assert_eq!(level(&hub).quality, Quality::Good, "재시작 후 정상 스캔한다");
+        assert_eq!(
+            level(&hub).quality,
+            Quality::Good,
+            "재시작 후 정상 스캔한다"
+        );
         handle.abort();
     }
 }

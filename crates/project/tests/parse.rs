@@ -467,3 +467,35 @@ swap_bytes = true
         assert!(err(&bad).contains("문자열"), "{bad}");
     }
 }
+
+#[test]
+fn 비밀처럼_보이는_키는_어느_위치에서도_거부한다() {
+    // 프로젝트 파일에 평문 비밀을 둘 자리가 없음을 보장한다.
+    // 자격증명이 필요해지면 `env:이름`/`file:경로` 참조로만 둔다(결정 0006).
+    let base = r#"
+[[device]]
+name = "sim"
+driver = "modbus-tcp"
+address = "127.0.0.1:5020"
+timeout_ms = 300
+scan_ms = 100
+
+[[tag]]
+name = "T0"
+device = "sim"
+space = "holding"
+address = 0
+type = "analog"
+scale = { plc_base = 0, plc_full = 100, base = 0, full = 100 }
+"#;
+    let with_server = "[server]\nlisten = \"127.0.0.1:9000\"\npublish_ms = 50\n".to_string() + base;
+    for bad in [
+        with_server.replace("publish_ms = 50", "publish_ms = 50\npassword = \"x\""),
+        base.replace("timeout_ms = 300", "timeout_ms = 300\npassword = \"x\""),
+        base.replace("address = 0", "address = 0\nsecret = \"x\""),
+        base.replace("address = 0", "address = 0\ndsn = \"x\""),
+        base.replace("address = 0", "address = 0\ntoken = \"x\""),
+    ] {
+        assert!(Project::from_toml(&bad).is_err(), "{bad}");
+    }
+}
