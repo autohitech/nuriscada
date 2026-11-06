@@ -223,6 +223,7 @@ export const ko = {
   nextPage: "다음 페이지",
   alarmHistory: "알람 이력·확인",
   tagFilter: "태그 필터",
+  tagFilterPlaceholder: "이름·장치 일부",
   recentRecords: "최근 기록 조회",
   olderRecords: "이전 기록",
   ackNote: "기록 확인은 알람 정상 복귀와 다릅니다.",

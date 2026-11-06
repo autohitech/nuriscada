@@ -220,6 +220,7 @@ export const en: Messages = {
   nextPage: "Next page",
   alarmHistory: "Alarm history and acknowledgement",
   tagFilter: "Tag filter",
+  tagFilterPlaceholder: "part of name or device",
   recentRecords: "Show recent records",
   olderRecords: "Older records",
   ackNote: "Acknowledging a record is not the same as the alarm returning to normal.",

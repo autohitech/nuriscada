@@ -26,6 +26,7 @@
   let batchRows = $state<{ name: string; raw: string }[]>([]);
   let batchResults = $state<{ name: string; outcome: string }[] | null>(null);
   let pendingBatch = $state<{ name: string; value: number | boolean }[] | null>(null);
+  let tagFilterText = $state("");
   let events = $state<{ seq: number; event: { time_ms: number; actor: string; source: string; action: string; target: string; detail: unknown } }[]>([]);
   let newName = $state("");
   let newPassword = $state("");
@@ -376,7 +377,11 @@
               </div>
             {/each}
             <h4>{m.tagsHeading(projectSpec.tag.length)}</h4>
+            <div class="inline">
+              <label>{m.tagFilter} <input bind:value={tagFilterText} maxlength="64" placeholder={m.tagFilterPlaceholder} /></label>
+            </div>
             {#each projectSpec.tag as tag, ti (ti)}
+              {#if tagFilterText.trim() === "" || tag.name.toLowerCase().includes(tagFilterText.trim().toLowerCase()) || tag.device.toLowerCase().includes(tagFilterText.trim().toLowerCase())}
               <div class="editor-row">
                 <div class="inline">
                   <label>{m.tagName} <input bind:value={tag.name} required /></label>
@@ -486,6 +491,7 @@
                   </div>
                 {/if}
               </div>
+              {/if}
             {/each}
             {#if projectToml}
               <details>
