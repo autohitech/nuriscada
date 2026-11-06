@@ -75,5 +75,5 @@
 
 ## 모션
 
-장식 모션을 쓰지 않는다. 움직임은 상태 변화 전달에만 쓴다.
-`prefers-reduced-motion: reduce`에서는 애니메이션·전이를 끈다(`tokens.css`).
+장식 모션을 쓰지 않는다. 움직임은 상태 변화 전달에만 쓴다. 현재 애니메이션·전환·SMIL이 없으며,
+`prefers-reduced-motion: reduce`에서는 애니메이션·전이를 끈다(`tokens.css`, SQ-U10).
