@@ -193,3 +193,18 @@ describe("visibleRange", () => {
     expect(visibleRange(0, 360, 36, 0)).toEqual({ start: 0, end: 0 });
   });
 });
+
+describe("large tag count", () => {
+  it("updates only the changed cell by reference", () => {
+    const s = new Store();
+    const tags = Array.from({ length: 3000 }, (_, i) => tag(`T${i}`));
+    s.apply(snapshot(tags));
+    const before = [...s.tags];
+    s.apply(batch(1, [[1500, 1, 1, "NORMAL"]]));
+    expect(s.tags[1500]).toMatchObject({ name: "T1500", value: 1 });
+    expect(s.tags[1500]).not.toBe(before[1500]);
+    for (const i of [0, 999, 1501, 2999]) {
+      expect(s.tags[i]).toBe(before[i]);
+    }
+  });
+});

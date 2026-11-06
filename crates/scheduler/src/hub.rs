@@ -563,3 +563,35 @@ impl Hub {
         }
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn big_project(n: usize) -> Arc<Project> {
+        use std::fmt::Write as _;
+        let mut text = String::from(
+            "[[device]]\nname = \"d\"\ndriver = \"modbus-tcp\"\naddress = \"127.0.0.1:1\"\nscan_ms = 100\n",
+        );
+        for i in 0..n {
+            let _ = write!(
+                text,
+                "\n[[tag]]\nname = \"T{i}\"\ndevice = \"d\"\nspace = \"coil\"\naddress = {i}\ntype = \"digital\"\n"
+            );
+        }
+        Arc::new(Project::from_toml(&text).unwrap())
+    }
+
+    #[test]
+    fn 수천_태그_중_바뀐_것만_묶음에_담는다() {
+        let hub = Hub::new(&big_project(3000));
+        // 갱신 전에는 묶음이 없다.
+        assert!(hub.drain_changes().is_none());
+        hub.set_tag(1500, Some(TagValue::Bool(true)), Quality::Good, None);
+        let batch = hub.drain_changes().expect("바뀐 태그 묶음");
+        assert_eq!(batch.items.len(), 1);
+        assert_eq!(batch.items[0].0, 1500);
+        // 같은 값으로 다시 두면 묶음이 생기지 않는다.
+        hub.set_tag(1500, Some(TagValue::Bool(true)), Quality::Good, None);
+        assert!(hub.drain_changes().is_none());
+    }
+}
