@@ -499,3 +499,28 @@ scale = { plc_base = 0, plc_full = 100, base = 0, full = 100 }
         assert!(Project::from_toml(&bad).is_err(), "{bad}");
     }
 }
+
+#[test]
+fn 기본_수신_주소는_루프백이다() {
+    // [server]를 생략하면 루프백 바인딩이 기본값이다(SQ-S06).
+    let p = Project::from_toml(
+        r#"
+[[device]]
+name = "sim"
+driver = "modbus-tcp"
+address = "127.0.0.1:5020"
+scan_ms = 100
+
+[[tag]]
+name = "T0"
+device = "sim"
+space = "holding"
+address = 0
+type = "analog"
+scale = { plc_base = 0, plc_full = 100, base = 0, full = 100 }
+"#,
+    )
+    .unwrap();
+    let addr: std::net::SocketAddr = p.server.listen.parse().unwrap();
+    assert!(addr.ip().is_loopback(), "listen = {}", p.server.listen);
+}
