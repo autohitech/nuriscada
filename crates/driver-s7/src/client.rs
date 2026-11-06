@@ -30,6 +30,9 @@ pub struct S7Client {
     stream: Option<TcpStream>,
     pdu_ref: u16,
     status: LinkStatus,
+    // 마지막으로 주고받은 프레임(앞 256바이트까지). 교신 전에는 비어 있다.
+    last_tx: Vec<u8>,
+    last_rx: Vec<u8>,
 }
 
 impl S7Client {
@@ -41,6 +44,8 @@ impl S7Client {
             stream: None,
             pdu_ref: 0,
             status: LinkStatus::initial(),
+            last_tx: Vec::new(),
+            last_rx: Vec::new(),
         }
     }
 
@@ -83,13 +88,14 @@ impl S7Client {
         request: &[u8],
         pdu_ref: u16,
         req: &ReadRequest,
-    ) -> Result<BlockData, DriverError> {
+    ) -> Result<(BlockData, Vec<u8>), DriverError> {
         let frame = Self::transact(stream, request).await?;
         let pdu = strip_transport(&frame)?;
         if pdu.len() < 6 || u16::from_le_bytes([pdu[4], pdu[5]]) != pdu_ref {
             return Err(DriverError::Protocol("PDU 참조가 다르다".into()));
         }
-        decode_read_response(req, &frame)
+        let data = decode_read_response(req, &frame)?;
+        Ok((data, frame))
     }
 
     async fn exchange_write(
@@ -244,9 +250,12 @@ impl Driver for S7Client {
         .await;
 
         match &result {
-            Ok(_) => {
+            Ok((_, rx)) => {
                 self.status.requests_ok += 1;
                 self.status.last_round_trip = Some(started.elapsed());
+                // 진단용으로 마지막 송수신 프레임을 앞 256바이트까지 남긴다.
+                self.last_tx = frame[..frame.len().min(256)].to_vec();
+                self.last_rx = rx[..rx.len().min(256)].to_vec();
             }
             Err(e) => {
                 self.status.requests_failed += 1;
@@ -259,10 +268,19 @@ impl Driver for S7Client {
                 }
             }
         }
-        result
+        result.map(|(data, _)| data)
     }
 
     fn status(&self) -> LinkStatus {
         self.status
+    }
+
+    fn last_frames(&self) -> Option<(Vec<u8>, Vec<u8>)> {
+        // 아직 교신하지 않았으면 `None`이다.
+        if self.last_tx.is_empty() && self.last_rx.is_empty() {
+            None
+        } else {
+            Some((self.last_tx.clone(), self.last_rx.clone()))
+        }
     }
 }

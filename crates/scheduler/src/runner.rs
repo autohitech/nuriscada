@@ -47,6 +47,7 @@ pub async fn run_device<D: Driver>(
 
         let last_error = scan_once(&hub, &names, &mut engine, &mut driver, &blocks).await;
         hub.set_link(device, driver.status(), last_error);
+        hub.set_frames(device, driver.last_frames());
 
         // 다음 계획 시각. 이미 지난 주기는 건너뛴다.
         let elapsed_ns = u64::try_from(Instant::now().saturating_duration_since(start).as_nanos())

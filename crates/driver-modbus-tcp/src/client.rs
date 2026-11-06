@@ -42,6 +42,9 @@ pub struct ModbusTcpClient {
     stream: Option<TcpStream>,
     transaction: u16,
     status: LinkStatus,
+    // 마지막 송수신 프레임(진단용, 최대 256바이트씩 잘라 보관한다).
+    last_tx: Vec<u8>,
+    last_rx: Vec<u8>,
 }
 
 impl ModbusTcpClient {
@@ -203,6 +206,9 @@ impl ModbusTcpClient {
             stream: None,
             transaction: 0,
             status: LinkStatus::initial(),
+            // 교신 전에는 빈 벡터로 둔다(`last_frames`는 `None`을 돌려준다).
+            last_tx: Vec::new(),
+            last_rx: Vec::new(),
         }
     }
 
@@ -215,7 +221,7 @@ impl ModbusTcpClient {
         stream: &mut TcpStream,
         request: &[u8],
         req: &ReadRequest,
-    ) -> Result<BlockData, DriverError> {
+    ) -> Result<(BlockData, Vec<u8>), DriverError> {
         stream
             .write_all(request)
             .await
@@ -232,7 +238,8 @@ impl ModbusTcpClient {
             .read_exact(&mut frame[MBAP_LEN..])
             .await
             .map_err(|e| DriverError::Connection(e.to_string()))?;
-        decode_read_response(req, &frame)
+        let data = decode_read_response(req, &frame)?;
+        Ok((data, frame))
     }
 }
 
@@ -284,9 +291,12 @@ impl Driver for ModbusTcpClient {
         .await;
 
         match &result {
-            Ok(_) => {
+            Ok((_, raw)) => {
                 self.status.requests_ok += 1;
                 self.status.last_round_trip = Some(started.elapsed());
+                // 진단용으로 송수신 프레임을 최대 256바이트씩 잘라 보관한다.
+                self.last_tx = frame[..frame.len().min(256)].to_vec();
+                self.last_rx = raw[..raw.len().min(256)].to_vec();
             }
             Err(e) => {
                 self.status.requests_failed += 1;
@@ -299,7 +309,15 @@ impl Driver for ModbusTcpClient {
                 }
             }
         }
-        result
+        result.map(|(data, _)| data)
+    }
+
+    fn last_frames(&self) -> Option<(Vec<u8>, Vec<u8>)> {
+        // 아직 교신하지 않았으면 송신 버퍼가 비어 있다.
+        if self.last_tx.is_empty() {
+            return None;
+        }
+        Some((self.last_tx.clone(), self.last_rx.clone()))
     }
 
     fn status(&self) -> LinkStatus {

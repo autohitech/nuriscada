@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use nuriscada_driver_api::{LinkState, LinkStatus};
+use nuriscada_driver_api::{LinkState, LinkStatus, hex_preview};
 use nuriscada_project::{Project, TagBody};
 use serde::Serialize;
 use tokio::sync::{broadcast, watch};
@@ -113,6 +113,10 @@ pub struct DeviceStatus {
     pub last_error: Option<String>,
     /// 스캔 작업이 비정상 종료 후 재시작한 횟수.
     pub restarts: u64,
+    /// 마지막 송신 프레임(16진수, 최대 512자).
+    pub last_tx_hex: Option<String>,
+    /// 마지막 수신 프레임(16진수, 최대 512자).
+    pub last_rx_hex: Option<String>,
 }
 
 /// 방송하는 프레임 하나. 이미 부호화되어 있어 모든 수신자가 같은 문자열을 공유한다.
@@ -232,6 +236,8 @@ impl Hub {
                 jitter_max_us: 0,
                 last_error: None,
                 restarts: 0,
+                last_tx_hex: None,
+                last_rx_hex: None,
             })
             .collect();
         let jitter = project.devices.iter().map(|_| JitterStats::new()).collect();
@@ -314,6 +320,8 @@ impl Hub {
                 jitter_max_us: 0,
                 last_error: None,
                 restarts: 0,
+                last_tx_hex: None,
+                last_rx_hex: None,
             })
             .collect();
         let jitter = project.devices.iter().map(|_| JitterStats::new()).collect();
@@ -566,6 +574,16 @@ impl Hub {
             d.last_error = last_error;
         }
     }
+    /// 마지막 송수신 프레임을 16진수로 기록한다(각 최대 256바이트).
+    pub(crate) fn set_frames(&self, device: usize, frames: Option<(Vec<u8>, Vec<u8>)>) {
+        let Some((tx, rx)) = frames else {
+            return;
+        };
+        let mut inner = self.write();
+        let d = &mut inner.devices[device];
+        d.last_tx_hex = Some(hex_preview(&tx[..tx.len().min(256)]));
+        d.last_rx_hex = Some(hex_preview(&rx[..rx.len().min(256)]));
+    }
 }
 /// 장치 진단 한 줄(순수 함수라 시험할 수 있다).
 pub fn diagnostic_line(devices: &[DeviceStatus]) -> String {
@@ -573,7 +591,7 @@ pub fn diagnostic_line(devices: &[DeviceStatus]) -> String {
         .iter()
         .map(|d| {
             format!(
-                "{} connected={} scans={} overruns={} restarts={} jitter_p99_us={} jitter_max_us={} rtt_ms={} ok={} failed={} error={}",
+                "{} connected={} scans={} overruns={} restarts={} jitter_p99_us={} jitter_max_us={} rtt_ms={} ok={} failed={} error={} tx={} rx={}",
                 d.name,
                 d.connected,
                 d.scans,
@@ -585,10 +603,17 @@ pub fn diagnostic_line(devices: &[DeviceStatus]) -> String {
                 d.requests_ok,
                 d.requests_failed,
                 d.last_error.as_deref().unwrap_or("-"),
+                short_hex(&d.last_tx_hex),
+                short_hex(&d.last_rx_hex),
             )
         })
         .collect::<Vec<_>>()
         .join(" | ")
+}
+/// 진단 기록용 짧은 16진수(앞 64자, 없으면 `-`).
+fn short_hex(hex: &Option<String>) -> String {
+    hex.as_deref()
+        .map_or_else(|| "-".into(), |h| h.chars().take(64).collect())
 }
 #[cfg(test)]
 mod tests {

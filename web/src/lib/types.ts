@@ -39,6 +39,8 @@ export interface DeviceStatus {
   jitter_max_us: number;
   last_error: string | null;
   restarts: number;
+  last_tx_hex: string | null;
+  last_rx_hex: string | null;
 }
 
 export interface StatusDoc {

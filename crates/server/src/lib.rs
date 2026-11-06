@@ -81,6 +81,15 @@ impl Driver for AnyDriver {
             Self::S7Tcp(d) => d.status(),
         }
     }
+    fn last_frames(&self) -> Option<(Vec<u8>, Vec<u8>)> {
+        match self {
+            Self::ModbusTcp(d) => d.last_frames(),
+            Self::MelsecMc(d) => d.last_frames(),
+            Self::XgtFenet(d) => d.last_frames(),
+            Self::FinsTcp(d) => d.last_frames(),
+            Self::S7Tcp(d) => d.last_frames(),
+        }
+    }
 }
 
 /// 실행 중인 스캐너들.

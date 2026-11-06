@@ -39,6 +39,9 @@ pub struct FinsTcpClient {
     server_node: u8,
     sid: u8,
     status: LinkStatus,
+    // 마지막 송수신 프레임(진단용, 최대 256바이트씩 보관한다).
+    last_tx: Vec<u8>,
+    last_rx: Vec<u8>,
 }
 
 impl FinsTcpClient {
@@ -52,6 +55,8 @@ impl FinsTcpClient {
             server_node: 0,
             sid: 0,
             status: LinkStatus::initial(),
+            last_tx: Vec::new(),
+            last_rx: Vec::new(),
         }
     }
 
@@ -64,7 +69,7 @@ impl FinsTcpClient {
         stream: &mut TcpStream,
         request: &[u8],
         req: &ReadRequest,
-    ) -> Result<BlockData, DriverError> {
+    ) -> Result<(BlockData, Vec<u8>), DriverError> {
         stream
             .write_all(request)
             .await
@@ -81,7 +86,8 @@ impl FinsTcpClient {
             .read_exact(&mut frame[TCP_HEADER_LEN..])
             .await
             .map_err(|e| DriverError::Connection(e.to_string()))?;
-        decode_read_response(req, &frame)
+        let data = decode_read_response(req, &frame)?;
+        Ok((data, frame))
     }
 
     async fn exchange_write(stream: &mut TcpStream, request: &[u8]) -> Result<(), DriverError> {
@@ -263,7 +269,10 @@ impl Driver for FinsTcpClient {
         .await;
 
         match &result {
-            Ok(_) => {
+            Ok((_, rx)) => {
+                // 주고받은 프레임을 남긴다(진단용, 최대 256바이트씩 자른다).
+                self.last_tx = frame[..frame.len().min(256)].to_vec();
+                self.last_rx = rx[..rx.len().min(256)].to_vec();
                 self.status.requests_ok += 1;
                 self.status.last_round_trip = Some(started.elapsed());
             }
@@ -278,10 +287,19 @@ impl Driver for FinsTcpClient {
                 }
             }
         }
-        result
+        result.map(|(data, _)| data)
     }
 
     fn status(&self) -> LinkStatus {
         self.status
+    }
+
+    fn last_frames(&self) -> Option<(Vec<u8>, Vec<u8>)> {
+        // 아직 교신하지 않았으면 `None`이다.
+        if self.last_tx.is_empty() && self.last_rx.is_empty() {
+            None
+        } else {
+            Some((self.last_tx.clone(), self.last_rx.clone()))
+        }
     }
 }
