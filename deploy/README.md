@@ -2,14 +2,21 @@
 
 묶음(`nuriscada-<버전>-<운영체제>-<아키텍처>`)을 버전별로 나란히 두고 `current` 심볼릭 링크로 가리킨다.
 이전 버전 묶음을 지우지 않으면 롤백은 링크만 되돌리면 된다.
-
 ## 설치 (Linux, systemd)
 
+무인 설치 스크립트가 아래 수동 순서를 그대로 수행한다(비밀번호는 환경 변수로만 받는다).
+
 ```sh
+sudo deploy/install.sh --archive dist/<묶음>.tar.gz \
+  --admin admin --password-env NURISCADA_ADMIN_PASSWORD
+```
+
+수동 순서:
+```sh
+sudo mkdir -p /opt/nuriscada /etc/nuriscada /var/lib/nuriscada
 sudo useradd --system --home-dir /var/lib/nuriscada --create-home nuriscada
-sudo mkdir -p /opt/nuriscada /etc/nuriscada
-sudo tar -xzf nuriscada-0.1.0-alpha.1-linux-x86_64.tar.gz -C /opt/nuriscada
-sudo ln -sfn /opt/nuriscada/nuriscada-0.1.0-alpha.1-linux-x86_64 /opt/nuriscada/current
+sudo tar -xzf dist/<묶음>.tar.gz -C /opt/nuriscada
+sudo ln -sfn /opt/nuriscada/nuriscada-<버전>-<운영체제>-<아키텍처> /opt/nuriscada/current
 sudo cp /opt/nuriscada/current/examples/demo.toml /etc/nuriscada/project.toml
 # DATA_DIR 경로와 수신 주소를 현장에 맞게 고친다. 외부 노출은 --allow-external 과 HTTPS 프록시가 필요하다.
 sudo cp deploy/nuriscada.service /etc/systemd/system/
