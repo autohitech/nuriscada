@@ -620,10 +620,10 @@ async fn 통신_두절과_복귀가_품질에_드러난다() {
 }
 
 #[tokio::test]
-async fn 문자열_태그는_표시되고_이력에_쌓이지_않는다() {
+async fn 문자열_태그는_스캔한_값을_보여준다() {
     let mut st = start().await;
-    // 시작 프로젝트에 문자열 태그가 없으므로 프로젝트 편집으로 추가한다.
-    // (서버 재시작 없이 Hub::reconfigure 경로를 함께 확인한다.)
+    // "HELLO\0" + 표시 전용 초기값.
+    st.sim.set_holding(0, &[0x4845, 0x4C4C, 0x4F00]);
     let project = {
         let base = Project::from_toml(&format!(
             r#"
@@ -642,6 +642,16 @@ address = 0
 type = "string"
 unit_text = "호"
 value = "1호기 라인"
+length = 3
+
+[[tag]]
+name = "DISP"
+device = "sim"
+space = "holding"
+address = 0
+type = "string"
+unit_text = "호"
+value = "표시 전용"
 "#,
             st.sim.addr()
         ))
@@ -663,18 +673,17 @@ value = "1호기 라인"
             .as_array()
             .unwrap()
             .iter()
-            .any(|t| t["name"] == "LINE" && t["value"] == "1호기 라인")
+            .any(|t| t["name"] == "LINE" && t["value"] == "HELLO")
     })
     .await;
     let doc = json(addr, "/api/v1/tags").await;
-    let line = doc["tags"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|t| t["name"] == "LINE")
-        .unwrap();
+    let tags = doc["tags"].as_array().unwrap();
+    let line = tags.iter().find(|t| t["name"] == "LINE").unwrap();
     assert_eq!(line["kind"], "string");
     assert_eq!(line["quality"], "good");
+    let disp = tags.iter().find(|t| t["name"] == "DISP").unwrap();
+    assert_eq!(disp["value"], "표시 전용");
+    assert_eq!(disp["quality"], "good");
     scanners.stop().await;
     st.scanners.take().unwrap().stop().await;
 }

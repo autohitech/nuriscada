@@ -275,6 +275,13 @@ impl Operations {
             CREATE INDEX IF NOT EXISTS alarms_tag_id ON alarms(tag,id);
             CREATE TABLE IF NOT EXISTS tag_history(id INTEGER PRIMARY KEY, tag TEXT NOT NULL, time_ms INTEGER NOT NULL, kind TEXT NOT NULL, value REAL, quality TEXT NOT NULL, alarm_state TEXT);
             CREATE INDEX IF NOT EXISTS tag_history_tag_time ON tag_history(tag,time_ms,id);")?;
+        // 문자열 값 이력용 열. 이미 있으면 무시한다.
+        if let Err(e) = db.execute_batch("ALTER TABLE tag_history ADD COLUMN value_text TEXT") {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column name") {
+                return Err(msg.into());
+            }
+        }
         let ops = Arc::new(Self {
             run_id: random_hex()?,
             archive_error: Mutex::new(None),
@@ -637,21 +644,12 @@ impl Operations {
         let mut conn = self.db.lock().map_err(|_| "DB 잠금 오류")?;
         let tx = conn.transaction()?;
         for s in samples {
-            // 문자열 태그는 값 이력에 저장하지 않는다.
-            if matches!(s.value, Some(TagValue::Text(_))) {
-                continue;
-            }
-            let val: Option<f64> = s.value.as_ref().map(|v| match v {
-                TagValue::Number(n) => *n,
-                TagValue::Bool(b) => {
-                    if *b {
-                        1.0
-                    } else {
-                        0.0
-                    }
-                }
-                TagValue::Text(_) => unreachable!("위에서 걸렀다"),
-            });
+            let (val, text): (Option<f64>, Option<&str>) = match s.value.as_ref() {
+                Some(TagValue::Number(n)) => (Some(*n), None),
+                Some(TagValue::Bool(b)) => (Some(if *b { 1.0 } else { 0.0 }), None),
+                Some(TagValue::Text(t)) => (None, Some(t.as_str())),
+                None => (None, None),
+            };
             let quality = match s.quality {
                 Quality::Good => "good",
                 Quality::Bad => "bad",
@@ -662,8 +660,8 @@ impl Operations {
                 s.changed_ms
             })?;
             tx.execute(
-                "INSERT INTO tag_history(tag,time_ms,kind,value,quality,alarm_state) VALUES (?1,?2,?3,?4,?5,?6)",
-                params![s.name, t, s.kind, val, quality, s.alarm_state],
+                "INSERT INTO tag_history(tag,time_ms,kind,value,value_text,quality,alarm_state) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                params![s.name, t, s.kind, val, text, quality, s.alarm_state],
             )?;
             let last_id = tx.last_insert_rowid();
             if last_id % 200 == 0 {
@@ -690,7 +688,7 @@ impl Operations {
         let to = i64::try_from(to_ms.unwrap_or(u64::MAX)).unwrap_or(i64::MAX);
         let conn = self.db.lock().map_err(|_| "DB 잠금 오류")?;
         let mut query = conn.prepare(
-            "SELECT id,time_ms,kind,value,quality,alarm_state FROM tag_history \
+            "SELECT id,time_ms,kind,value,value_text,quality,alarm_state FROM tag_history \
              WHERE tag=?1 AND time_ms>=?2 AND time_ms<=?3 ORDER BY time_ms DESC, id DESC LIMIT ?4",
         )?;
         let rows = query.query_map(
@@ -701,18 +699,20 @@ impl Operations {
                     r.get::<_, i64>(1)?,
                     r.get::<_, String>(2)?,
                     r.get::<_, Option<f64>>(3)?,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, Option<String>>(5)?,
+                    r.get::<_, Option<String>>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, Option<String>>(6)?,
                 ))
             },
         )?;
         let mut out = Vec::new();
         for row in rows {
-            let (id, time_ms, kind, val, quality, alarm_state) = row?;
-            let value = match (kind.as_str(), val) {
-                ("digital", Some(n)) => json!(n != 0.0),
-                (_, Some(n)) => json!(n),
-                (_, None) => Value::Null,
+            let (id, time_ms, kind, val, text, quality, alarm_state) = row?;
+            let value = match (kind.as_str(), val, text) {
+                ("string", _, Some(t)) => json!(t),
+                ("digital", Some(n), _) => json!(n != 0.0),
+                (_, Some(n), _) => json!(n),
+                (_, None, _) => Value::Null,
             };
             out.push(json!({
                 "id": id,
@@ -780,10 +780,6 @@ impl Operations {
                 let now = now_ms();
                 let mut samples = Vec::new();
                 for mut t in hub.tags() {
-                    // 문자열 태그는 값 이력에 저장하지 않는다.
-                    if matches!(t.value, Some(TagValue::Text(_))) {
-                        continue;
-                    }
                     if t.changed_ms == 0 && t.value.is_none() {
                         continue;
                     }
@@ -845,10 +841,14 @@ mod history_tests {
     use nuriscada_scheduler::{Quality, TagSnapshot, TagValue};
 
     fn snapshot(name: &str, value: Option<TagValue>) -> TagSnapshot {
+        snapshot_kind(name, "analog", value)
+    }
+
+    fn snapshot_kind(name: &str, kind: &'static str, value: Option<TagValue>) -> TagSnapshot {
         TagSnapshot {
             name: name.to_string(),
             device: "sim".to_string(),
-            kind: "analog",
+            kind,
             value,
             quality: Quality::Good,
             changed_ms: 1,
@@ -858,7 +858,7 @@ mod history_tests {
     }
 
     #[test]
-    fn 문자열_표본은_값_이력에_저장하지_않는다() {
+    fn 문자열_표본도_값_이력에_저장하고_조회한다() {
         let ops = Operations::open(
             Path::new(":memory:"),
             Arc::new(Project::from_toml("").unwrap()),
@@ -867,7 +867,7 @@ mod history_tests {
         .unwrap();
         ops.save_tag_samples(&[
             snapshot("N", Some(TagValue::Number(1.0))),
-            snapshot("S", Some(TagValue::Text("가나다".to_string()))),
+            snapshot_kind("S", "string", Some(TagValue::Text("가나다".to_string()))),
         ])
         .unwrap();
         let rows: Vec<String> = ops
@@ -880,6 +880,10 @@ mod history_tests {
             .unwrap()
             .collect::<std::result::Result<Vec<String>, rusqlite::Error>>()
             .unwrap();
-        assert_eq!(rows, vec!["N".to_string()]);
+        assert_eq!(rows, vec!["N".to_string(), "S".to_string()]);
+        let history = ops.tag_history("S", None, None, 10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0]["value"], serde_json::json!("가나다"));
+        assert_eq!(history[0]["kind"], "string");
     }
 }

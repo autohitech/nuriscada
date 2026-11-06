@@ -389,7 +389,7 @@ value = "1호기 라인"
     assert_eq!(p.tags.len(), 1);
     assert!(matches!(
         &p.tags[0].body,
-        nuriscada_project::TagBody::String { unit_text, initial }
+        nuriscada_project::TagBody::String { unit_text, initial, length: None, swap_bytes: false }
         if unit_text == "호" && initial == "1호기 라인"
     ));
     let reparsed = Project::from_toml(&p.to_toml()).unwrap();
@@ -403,5 +403,47 @@ value = "1호기 라인"
     ] {
         let bad = text.replace("value = ", &format!("{extra}value = "));
         assert!(err(&bad).contains("문자열 태그"), "{extra}");
+    }
+}
+
+#[test]
+fn 문자열_스캔_설정을_검사한다() {
+    let base = r#"
+[[device]]
+name = "sim"
+driver = "modbus-tcp"
+address = "127.0.0.1:5020"
+
+[[tag]]
+name = "LINE"
+device = "sim"
+space = "holding"
+address = 10
+type = "string"
+length = 4
+swap_bytes = true
+"#;
+    let p = Project::from_toml(base).unwrap();
+    assert!(matches!(
+        &p.tags[0].body,
+        nuriscada_project::TagBody::String {
+            length: Some(4),
+            swap_bytes: true,
+            ..
+        }
+    ));
+    let reparsed = Project::from_toml(&p.to_toml()).unwrap();
+    assert_eq!(p, reparsed);
+    assert!(p.to_toml().contains("length = 4"));
+    assert!(p.to_toml().contains("swap_bytes = true"));
+
+    // 길이는 1~32워드, 스캔은 워드 영역만, swap_bytes 단독은 거부한다.
+    for bad in [
+        base.replace("length = 4", "length = 0"),
+        base.replace("length = 4", "length = 33"),
+        base.replace("space = \"holding\"", "space = \"coil\""),
+        base.replace("length = 4\nswap_bytes = true\n", "swap_bytes = true\n"),
+    ] {
+        assert!(err(&bad).contains("문자열"), "{bad}");
     }
 }

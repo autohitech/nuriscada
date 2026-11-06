@@ -161,6 +161,8 @@ export const en: Messages = {
   importCsv: "Save CSV",
   unitText: "Unit label",
   tagString: "Text",
+  stringLength: "Length (words, empty = display only)",
+  swapBytes: "Swap bytes",
   useAlarm: "Use alarm",
   removeTag: "Remove tag",
   plcBase: "PLC low",

@@ -262,12 +262,16 @@ pub enum TagBody {
         /// 알람 종류(없을 수 있음).
         alarm_kind: Option<u8>,
     },
-    /// 문자열 표시(스캔하지 않는다. 값 이력에 저장하지 않는다).
+    /// 문자열 표시(길이가 없으면 스캔하지 않고 값 이력에 저장하지 않는다).
     String {
         /// 단위 표시 문자열.
         unit_text: String,
         /// 표시할 초기 문자열.
         initial: String,
+        /// 스캔할 워드 수. 없으면 표시 전용이다.
+        length: Option<u16>,
+        /// 워드 바이트 순서 뒤집기.
+        swap_bytes: bool,
     },
 }
 
@@ -409,6 +413,12 @@ pub struct TagSpec {
     /// 문자열 태그의 표시 문자열(`string` 전용).
     #[serde(default)]
     pub value: Option<String>,
+    /// 문자열 태그가 스캔할 워드 수(`string` 전용). 없으면 표시 전용이다.
+    #[serde(default)]
+    pub length: Option<u16>,
+    /// 문자열 태그의 워드 바이트 순서 뒤집기(`string` 전용).
+    #[serde(default)]
+    pub swap_bytes: bool,
 }
 
 fn default_unit() -> u8 {
@@ -811,9 +821,30 @@ impl Project {
                     if t.alarm.is_some() {
                         return invalid(format!("태그 `{}`: 문자열 태그에는 alarm이 없다", t.name));
                     }
+                    if let Some(length) = t.length {
+                        if length == 0 || length > 32 {
+                            return invalid(format!(
+                                "태그 `{}`: 문자열 길이 {}는 1~32워드여야 한다",
+                                t.name, length
+                            ));
+                        }
+                        if space.kind() != DataKind::Word {
+                            return invalid(format!(
+                                "태그 `{}`: 문자열 스캔은 워드 영역만 된다",
+                                t.name
+                            ));
+                        }
+                    } else if t.swap_bytes {
+                        return invalid(format!(
+                            "태그 `{}`: 문자열 swap_bytes는 length와 함께 쓴다",
+                            t.name
+                        ));
+                    }
                     TagBody::String {
                         unit_text: t.unit_text,
                         initial: t.value.unwrap_or_default(),
+                        length: t.length,
+                        swap_bytes: t.swap_bytes,
                     }
                 }
                 other => {
@@ -941,7 +972,7 @@ impl Project {
                 .tags
                 .iter()
                 .map(|t| {
-                    let (kind, scale, alarm, unit_text, value) = match &t.body {
+                    let (kind, scale, alarm, unit_text, value, length, swap_bytes) = match &t.body {
                         TagBody::Analog {
                             scale,
                             alarm,
@@ -967,6 +998,8 @@ impl Project {
                             }),
                             unit_text.clone(),
                             None,
+                            None,
+                            false,
                         ),
                         TagBody::Digital { alarm_kind } => (
                             "digital".to_string(),
@@ -981,13 +1014,22 @@ impl Project {
                             }),
                             String::new(),
                             None,
+                            None,
+                            false,
                         ),
-                        TagBody::String { unit_text, initial } => (
+                        TagBody::String {
+                            unit_text,
+                            initial,
+                            length,
+                            swap_bytes,
+                        } => (
                             "string".to_string(),
                             None,
                             None,
                             unit_text.clone(),
                             Some(initial.clone()),
+                            *length,
+                            *swap_bytes,
                         ),
                     };
                     TagSpec {
@@ -1002,6 +1044,8 @@ impl Project {
                         alarm,
                         unit_text,
                         value,
+                        length,
+                        swap_bytes,
                     }
                 })
                 .collect(),
@@ -1042,6 +1086,12 @@ impl Project {
             }
             if let Some(v) = &t.value {
                 out.push_str(&format!("value = {}\n", toml_str(v)));
+            }
+            if let Some(length) = t.length {
+                out.push_str(&format!("length = {length}\n"));
+            }
+            if t.swap_bytes {
+                out.push_str("swap_bytes = true\n");
             }
             if let Some(s) = &t.scale {
                 let mut fields = vec![
