@@ -4,15 +4,18 @@
 //! MQTT 읽기 전용 다리(SQ-C06). 태그 묶음을 JSON 그대로 발행한다.
 //!
 //! 쓰기·제어는 받지 않는다. 브로커가 없어도 서버는 계속 돈다.
-
+//! 평문 MQTT만 지원한다(TLS 의존성을 뺐다. `mqtts://`는 거부한다).
 use std::sync::Arc;
 use std::time::Duration;
 
 use nuriscada_scheduler::Hub;
 use rumqttc::{AsyncClient, MqttOptions, QoS};
 
-/// `mqtt://호스트[:포트]`를 푼다. 포트가 없으면 1883이다.
+/// `mqtt://호스트[:포트]`를 푼다. 포트가 없으면 1883이다. TLS는 지원하지 않는다.
 pub fn parse_broker(text: &str) -> Result<(String, u16), String> {
+    if text.starts_with("mqtts://") {
+        return Err(format!("TLS 브로커(mqtts)는 지원하지 않는다: {text}"));
+    }
     let rest = text
         .strip_prefix("mqtt://")
         .ok_or_else(|| format!("브로커 주소는 mqtt://로 시작해야 한다: {text}"))?;
@@ -99,6 +102,7 @@ mod tests {
         assert!(parse_broker("example").is_err());
         assert!(parse_broker("mqtt://").is_err());
         assert!(parse_broker("mqtt://h:notaport").is_err());
+        assert!(parse_broker("mqtts://h").is_err());
     }
 
     #[test]

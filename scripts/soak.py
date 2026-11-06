@@ -12,6 +12,7 @@ import platform
 import shutil
 import statistics
 import subprocess
+import time
 
 
 def write_json(path, data):
