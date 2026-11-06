@@ -293,6 +293,35 @@ pub enum TagBody {
     },
 }
 
+/// 인터록 조건 값.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum InterlockValue {
+    /// 불리언(디지털 태그와 비교).
+    Bool(bool),
+    /// 정수(아날로그 태그와 비교).
+    Int(i64),
+}
+
+/// 편집 명세의 인터록 조건 하나.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InterlockSpec {
+    /// 조건 태그 이름.
+    pub tag: String,
+    /// 요구 값.
+    pub value: InterlockValue,
+}
+
+/// 검증된 인터록 조건 하나. `tag`는 태그 목록에서의 위치다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Interlock {
+    /// 조건 태그의 위치.
+    pub tag: usize,
+    /// 요구 값.
+    pub value: InterlockValue,
+}
+
 /// 태그.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tag {
@@ -310,6 +339,8 @@ pub struct Tag {
     pub address: u16,
     /// 태그 본문.
     pub body: TagBody,
+    /// 쓰기 허용 조건(AND). 빈 목록이면 조건 없음.
+    pub interlocks: Vec<Interlock>,
 }
 
 /// 검증을 마친 프로젝트.
@@ -437,6 +468,9 @@ pub struct TagSpec {
     /// 문자열 태그의 워드 바이트 순서 뒤집기(`string` 전용).
     #[serde(default)]
     pub swap_bytes: bool,
+    /// 쓰기 허용 조건 목록(AND). 비어 있으면 조건 없음.
+    #[serde(default)]
+    pub interlock: Vec<InterlockSpec>,
 }
 
 fn default_unit() -> u8 {
@@ -676,6 +710,13 @@ impl Project {
 
         let mut tags = Vec::new();
         let mut tag_names = HashSet::new();
+        let all_names: Vec<String> = raw.tags.iter().map(|t| t.name.clone()).collect();
+        let mut analog_by_name = std::collections::HashMap::new();
+        for t in &raw.tags {
+            analog_by_name
+                .entry(t.name.clone())
+                .or_insert_with(|| t.kind.as_str() == "analog");
+        }
         for t in raw.tags {
             if t.name.trim().is_empty() {
                 return invalid("태그 이름이 비어 있다");
@@ -878,6 +919,39 @@ impl Project {
                     ));
                 }
             };
+            if !t.interlock.is_empty() && !t.writable {
+                return invalid(format!("태그 `{}`: 인터록은 쓰기 허용 태그에만 둔다", t.name));
+            }
+            let mut interlocks = Vec::new();
+            for cond in &t.interlock {
+                let Some(ref_idx) = all_names.iter().position(|n| n == &cond.tag) else {
+                    return invalid(format!(
+                        "태그 `{}`: 인터록 조건의 태그 `{}`가 없다",
+                        t.name, cond.tag
+                    ));
+                };
+                if ref_idx == tags.len() {
+                    return invalid(format!(
+                        "태그 `{}`: 자기 자신을 인터록 조건으로 둘 수 없다",
+                        t.name
+                    ));
+                }
+                let is_analog = analog_by_name.get(&cond.tag).copied().unwrap_or(false);
+                let kind_ok = matches!(
+                    (&cond.value, is_analog),
+                    (InterlockValue::Bool(_), false) | (InterlockValue::Int(_), true)
+                );
+                if !kind_ok {
+                    return invalid(format!(
+                        "태그 `{}`: 조건 태그 `{}`와 값 종류가 맞지 않다",
+                        t.name, cond.tag
+                    ));
+                }
+                interlocks.push(Interlock {
+                    tag: ref_idx,
+                    value: cond.value,
+                });
+            }
             tags.push(Tag {
                 writable: t.writable,
                 name: t.name,
@@ -886,6 +960,7 @@ impl Project {
                 space,
                 address: t.address,
                 body,
+                interlocks,
             });
         }
 
@@ -1070,6 +1145,14 @@ impl Project {
                         value,
                         length,
                         swap_bytes,
+                        interlock: t
+                            .interlocks
+                            .iter()
+                            .map(|r| InterlockSpec {
+                                tag: self.tags[r.tag].name.clone(),
+                                value: r.value,
+                            })
+                            .collect(),
                     }
                 })
                 .collect(),
@@ -1153,6 +1236,18 @@ impl Project {
                     fields.push(format!("gap = {}", toml_f64(a.gap)));
                 }
                 out.push_str(&format!("alarm = {{ {} }}\n", fields.join(", ")));
+            }
+            for r in &t.interlock {
+                out.push_str("\n[[tag.interlock]]\n");
+                out.push_str(&format!("tag = {}\n", toml_str(&r.tag)));
+                match r.value {
+                    InterlockValue::Bool(b) => {
+                        out.push_str(&format!("value = {b}\n"));
+                    }
+                    InterlockValue::Int(n) => {
+                        out.push_str(&format!("value = {n}\n"));
+                    }
+                }
             }
         }
         for s in &spec.screens {
