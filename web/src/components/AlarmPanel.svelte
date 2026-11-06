@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- Copyright NuriScada contributors -->
 <script lang="ts">
-  import { formatTime, formatValue, severityOfEvent, severityOfState } from "../lib/format";
+  import { formatTime, formatValue, severityOfEvent, severityOfState, shouldBeep } from "../lib/format";
+  import type { AlarmSoundRule } from "../lib/format";
   import type { Store } from "../lib/store.svelte";
   import { stateLabel, eventLabel, m } from "../lib/i18n.svelte";
   import StateChip from "./StateChip.svelte";
@@ -25,6 +26,48 @@
       ? `${store.latestAlarm.tag}: ${eventLabel(store.latestAlarm.event)}`
       : "",
   );
+  const SOUND_KEY = "nuriscada.alarm-sound";
+  function loadSoundRule(): AlarmSoundRule {
+    try {
+      const saved = localStorage.getItem(SOUND_KEY);
+      if (saved === "critical" || saved === "warn" || saved === "all") return saved;
+    } catch {
+      // 저장소를 쓸 수 없으면 끔으로 둔다.
+    }
+    return "off";
+  }
+  let soundRule = $state<AlarmSoundRule>(loadSoundRule());
+  let audio: AudioContext | null = null;
+  let lastBeepedSeq = 0;
+  function beep(critical: boolean): void {
+    try {
+      audio ??= new AudioContext();
+      if (audio.state === "suspended") void audio.resume();
+      const osc = audio.createOscillator();
+      const gain = audio.createGain();
+      osc.frequency.value = critical ? 880 : 440;
+      gain.gain.value = 0.15;
+      osc.connect(gain);
+      gain.connect(audio.destination);
+      osc.start();
+      osc.stop(audio.currentTime + (critical ? 0.4 : 0.2));
+    } catch {
+      // 소리를 낼 수 없으면 조용히 넘어간다.
+    }
+  }
+  $effect(() => {
+    try {
+      localStorage.setItem(SOUND_KEY, soundRule);
+    } catch {
+      // 저장 실패는 무시한다.
+    }
+    const latest = store.latestAlarm;
+    if (latest && latest.seq > lastBeepedSeq) {
+      lastBeepedSeq = latest.seq;
+      const severity = severityOfEvent(latest.event);
+      if (shouldBeep(soundRule, severity)) beep(severity === "critical");
+    }
+  });
 </script>
 
 <aside class="panel" aria-label={m.alarms}>
@@ -33,6 +76,16 @@
 
   <section>
     <h2>{m.activeAlarms} <span class="count">{store.activeNames.length}</span></h2>
+    <p class="muted">
+      <label>{m.alarmSound}
+        <select bind:value={soundRule}>
+          <option value="off">{m.soundOff}</option>
+          <option value="critical">{m.soundCritical}</option>
+          <option value="warn">{m.soundWarn}</option>
+          <option value="all">{m.soundAll}</option>
+        </select>
+      </label>
+    </p>
     {#if store.activeNames.length === 0}
       <p class="empty">{m.noAlarms}</p>
     {:else}

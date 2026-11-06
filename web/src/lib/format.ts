@@ -66,6 +66,21 @@ export function isVisible(value: number | boolean | string | null, quality: "goo
   if (typeof value === "string") return value.length > 0;
   return value !== 0;
 }
+export type AlarmSoundRule = "off" | "critical" | "warn" | "all";
+
+/** 소리 규칙에 따라 울릴지 정한다(순수 함수라 시험할 수 있다). */
+export function shouldBeep(rule: AlarmSoundRule, severity: Severity): boolean {
+  switch (rule) {
+    case "off":
+      return false;
+    case "critical":
+      return severity === "critical";
+    case "warn":
+      return severity === "critical" || severity === "warn";
+    case "all":
+      return severity !== "normal";
+  }
+}
 
 /** RFC 4180 인용 규칙으로 한 셀을 감싼다. */
 export function csvCell(text: string): string {

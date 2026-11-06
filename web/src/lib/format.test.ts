@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { csvCell, formatImportCsv, isVisible } from "./format";
+import { csvCell, formatImportCsv, isVisible, shouldBeep } from "./format";
 import type { ImportReport } from "./types";
 
 const report = (over: Partial<ImportReport> = {}): ImportReport => ({
@@ -62,5 +62,18 @@ describe("isVisible", () => {
     expect(isVisible(0, "good")).toBe(false);
     expect(isVisible("on", "good")).toBe(true);
     expect(isVisible("", "good")).toBe(false);
+  });
+});
+
+describe("shouldBeep", () => {
+  it("follows the configured rule", () => {
+    expect(shouldBeep("off", "critical")).toBe(false);
+    expect(shouldBeep("critical", "critical")).toBe(true);
+    expect(shouldBeep("critical", "warn")).toBe(false);
+    expect(shouldBeep("warn", "warn")).toBe(true);
+    expect(shouldBeep("warn", "info")).toBe(false);
+    expect(shouldBeep("all", "info")).toBe(true);
+    expect(shouldBeep("all", "bad")).toBe(true);
+    expect(shouldBeep("all", "normal")).toBe(false);
   });
 });

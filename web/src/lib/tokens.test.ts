@@ -11,7 +11,7 @@ const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 function definedTokens(): Set<string> {
   const css = readFileSync(join(root, "src/styles/tokens.css"), "utf-8");
   return new Set(
-    [...css.matchAll(/--([a-z0-9-]+)\s*:/g)].map((m) => m[1]),
+    [...css.matchAll(/--([a-z0-9-]+)\s*:/g)].map((m) => m[1] ?? "").filter((t) => t !== ""),
   );
 }
 
@@ -26,7 +26,10 @@ function usedTokens(): Set<string> {
       }
       if (!/\.(svelte|ts|css)$/.test(name) || name.endsWith(".test.ts")) continue;
       const text = readFileSync(path, "utf-8");
-      for (const m of text.matchAll(/var\(--([a-z0-9-]+)/g)) used.add(m[1]);
+      for (const m of text.matchAll(/var\(--([a-z0-9-]+)/g)) {
+        const token = m[1];
+        if (token !== undefined) used.add(token);
+      }
     }
   };
   walk(join(root, "src"));
