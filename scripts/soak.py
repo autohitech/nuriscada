@@ -10,14 +10,41 @@ import json
 import pathlib
 import platform
 import shutil
+import statistics
 import subprocess
-import time
 
 
 def write_json(path, data):
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
     temporary.replace(path)
+
+
+def check_stability(trace_path):
+    """앞 1/3과 뒤 1/3 표본의 중앙값을 견준다. 표본이 9개 미만이면 판정하지 않는다.
+
+    RSS 증가 10% 이하, 파일 디스크립터 증가 2 이하를 안정으로 본다.
+    (표본, 통과 여부, 설명)을 돌려준다. 표본 부족이면 통과 여부는 None이다.
+    """
+    rows = []
+    for line in trace_path.read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row.get("rss_kib"), int) and isinstance(row.get("file_descriptors"), int):
+            rows.append(row)
+    if len(rows) < 9:
+        return rows, None, f"표본 {len(rows)}개로 부족하다(9개 필요)"
+    third = len(rows) // 3
+    rss_first = statistics.median(r["rss_kib"] for r in rows[:third])
+    rss_last = statistics.median(r["rss_kib"] for r in rows[-third:])
+    fds = [r["file_descriptors"] for r in rows]
+    rss_growth = (rss_last - rss_first) / rss_first if rss_first > 0 else 0.0
+    fd_growth = max(fds) - min(fds)
+    ok = rss_growth <= 0.10 and fd_growth <= 2
+    note = f"RSS 중앙값 {rss_first}→{rss_last} KiB({rss_growth:+.1%}), FD {min(fds)}→{max(fds)}"
+    return rows, ok, note
 
 
 def resources(pid):
@@ -111,6 +138,7 @@ def main():
     except (OSError, ValueError):
         report = None
     performance_pass = process.returncode == 0 and report is not None and report.get("pass") is True
+    _, stability_pass, stability_note = check_stability(output / "samples.jsonl")
     metadata.update({
         "state": "completed" if reason is None else "interrupted",
         "ended_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -118,11 +146,13 @@ def main():
         "exit_code": process.returncode, "reason": reason,
         "resource_samples": samples, "resource_errors": errors,
         "performance_pass": performance_pass,
-        "stability_note": "자원 추세 검토 전에는 누수 없음으로 판정하지 않는다",
+        "stability_pass": stability_pass,
+        "stability_note": stability_note,
     })
     write_json(output / "status.json", metadata)
     print(json.dumps(metadata, ensure_ascii=False), flush=True)
-    return 0 if performance_pass and samples > 0 and errors == 0 and reason is None else 1
+    return 0 if (performance_pass and samples > 0 and errors == 0 and reason is None
+                 and stability_pass is not False) else 1
 
 
 if __name__ == "__main__":
