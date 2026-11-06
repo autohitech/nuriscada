@@ -330,6 +330,12 @@ fn fins_wr_hr_ar_읽기를_받아들인다() {
     assert_eq!(p.tags[4].space, Space::FinsAr);
     let reparsed = Project::from_toml(&p.to_toml()).unwrap();
     assert_eq!(p, reparsed);
+
+    // AR은 읽기 전용이다.
+    let writable = format!(
+        "{tags}\n[[tag]]\nname = \"A1\"\nwritable = true\ndevice = \"omron1\"\nspace = \"ar\"\naddress = 0\ntype = \"digital\"\n"
+    );
+    assert!(err(&writable).contains("dm·cio·wr·hr 영역만"));
 }
 
 const S7: &str = r#"
