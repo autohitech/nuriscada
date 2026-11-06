@@ -26,6 +26,8 @@ pub const AREA_CIO_BIT: u8 = 0x30;
 pub const AREA_WR_BIT: u8 = 0x31;
 /// HR 비트 영역 코드.
 pub const AREA_HR_BIT: u8 = 0x32;
+/// AR 비트 영역 코드.
+pub const AREA_AR_BIT: u8 = 0x33;
 /// 메모리 영역 읽기(MRC 01 SRC 01).
 pub const MRC_MEMORY: u8 = 0x01;
 /// 읽기(SRC 01).
@@ -102,6 +104,13 @@ pub enum ReadRequest {
         /// 읽을 비트 수.
         count: u16,
     },
+    /// AR 비트 읽기.
+    ArBits {
+        /// 시작 비트 번호(워드×16 + 비트).
+        start_bit: u32,
+        /// 읽을 비트 수.
+        count: u16,
+    },
 }
 
 impl ReadRequest {
@@ -109,7 +118,10 @@ impl ReadRequest {
     pub fn kind(self) -> DataKind {
         match self {
             Self::DmWords { .. } => DataKind::Word,
-            Self::CioBits { .. } | Self::WrBits { .. } | Self::HrBits { .. } => DataKind::Bit,
+            Self::CioBits { .. }
+            | Self::WrBits { .. }
+            | Self::HrBits { .. }
+            | Self::ArBits { .. } => DataKind::Bit,
         }
     }
 }
@@ -164,7 +176,8 @@ pub fn encode_read_request(
         }
         ReadRequest::CioBits { start_bit, count }
         | ReadRequest::WrBits { start_bit, count }
-        | ReadRequest::HrBits { start_bit, count } => {
+        | ReadRequest::HrBits { start_bit, count }
+        | ReadRequest::ArBits { start_bit, count } => {
             if count == 0 || count > MAX_BIT_ITEMS {
                 return Err(DriverError::InvalidRequest(format!(
                     "비트 읽기 개수 {count}는 1~{MAX_BIT_ITEMS}이어야 한다"
@@ -181,7 +194,8 @@ pub fn encode_read_request(
             let area = match req {
                 ReadRequest::CioBits { .. } => AREA_CIO_BIT,
                 ReadRequest::WrBits { .. } => AREA_WR_BIT,
-                _ => AREA_HR_BIT,
+                ReadRequest::HrBits { .. } => AREA_HR_BIT,
+                _ => AREA_AR_BIT,
             };
             fins_frame(client, server, sid, area, word as u16, bit, count)
         }
@@ -293,7 +307,8 @@ pub fn decode_read_response(req: &ReadRequest, frame: &[u8]) -> Result<BlockData
         }
         ReadRequest::CioBits { count, .. }
         | ReadRequest::WrBits { count, .. }
-        | ReadRequest::HrBits { count, .. } => {
+        | ReadRequest::HrBits { count, .. }
+        | ReadRequest::ArBits { count, .. } => {
             let mut out = Vec::with_capacity(usize::from(count));
             for _ in 0..count {
                 let bytes = take(&mut body, 2)?;
@@ -388,6 +403,7 @@ pub fn encode_write_request(
             let area = match req {
                 WriteRequest::CioBits { .. } => AREA_CIO_BIT,
                 WriteRequest::WrBits { .. } => AREA_WR_BIT,
+                WriteRequest::HrBits { .. } => AREA_HR_BIT,
                 _ => AREA_HR_BIT,
             };
             (
@@ -563,6 +579,18 @@ mod tests {
         let frame = encode_read_request(0xFB, 0x0F, 1, &hr).unwrap();
         assert_eq!(frame[28..32], [0x32, 0x00, 0x02, 0x03]);
         assert_eq!(frame[32..34], [0x00, 0x02]);
+    }
+
+    #[test]
+    fn ar_비트_읽기_요청_인코딩() {
+        // AR 워드 4 bit 3(= 비트 번호 67).
+        let ar = ReadRequest::ArBits {
+            start_bit: 67,
+            count: 1,
+        };
+        let frame = encode_read_request(0xFB, 0x0F, 1, &ar).unwrap();
+        assert_eq!(frame[28..32], [0x33, 0x00, 0x04, 0x03]);
+        assert_eq!(frame[32..34], [0x00, 0x01]);
     }
 
     #[test]

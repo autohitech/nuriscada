@@ -138,6 +138,8 @@ pub enum Space {
     FinsWr,
     /// HR 비트(FINS, 비트 번호 = 워드×16 + 비트).
     FinsHr,
+    /// AR 비트(FINS, 비트 번호 = 워드×16 + 비트).
+    FinsAr,
     /// DB 워드(S7, DB 번호 = unit, 바이트 주소).
     S7Db,
     /// M 비트(S7, 비트 번호 = 바이트×8 + 비트).
@@ -157,6 +159,7 @@ impl Space {
             | Self::FinsCio
             | Self::FinsWr
             | Self::FinsHr
+            | Self::FinsAr
             | Self::S7M => DataKind::Bit,
             Self::Holding
             | Self::Input
@@ -170,7 +173,7 @@ impl Space {
     }
 
     /// 드라이버 인터페이스의 영역 번호(MODBUS 0~3, MELSEC 10·11·12 워드·20·21·22 비트,
-    /// XGT 30·31, FINS 40·43, S7 50·51).
+    /// XGT 30·31, FINS 40~44, S7 50·51).
     pub fn code(self) -> u16 {
         match self {
             Self::Coil => 0,
@@ -189,6 +192,7 @@ impl Space {
             Self::FinsCio => 41,
             Self::FinsWr => 42,
             Self::FinsHr => 43,
+            Self::FinsAr => 44,
             Self::S7Db => 50,
             Self::S7M => 51,
         }
@@ -213,6 +217,7 @@ impl Space {
             Self::FinsCio => "cio",
             Self::FinsWr => "wr",
             Self::FinsHr => "hr",
+            Self::FinsAr => "ar",
             Self::S7Db => "s7db",
             Self::S7M => "s7m",
         }
@@ -227,7 +232,7 @@ impl Space {
     pub fn is_fins(self) -> bool {
         matches!(
             self,
-            Self::FinsDm | Self::FinsCio | Self::FinsWr | Self::FinsHr
+            Self::FinsDm | Self::FinsCio | Self::FinsWr | Self::FinsHr | Self::FinsAr
         )
     }
 
@@ -566,10 +571,11 @@ fn parse_space(s: &str) -> Result<Space, ConfigError> {
         "cio" => Ok(Space::FinsCio),
         "wr" => Ok(Space::FinsWr),
         "hr" => Ok(Space::FinsHr),
+        "ar" => Ok(Space::FinsAr),
         "s7db" => Ok(Space::S7Db),
         "s7m" => Ok(Space::S7M),
         other => invalid(format!(
-            "알 수 없는 영역 `{other}` (coil, discrete, holding, input, d, w, r, m, x, y, mw, mx, dm, cio, wr, hr, s7db, s7m 중 하나)"
+            "알 수 없는 영역 `{other}` (coil, discrete, holding, input, d, w, r, m, x, y, mw, mx, dm, cio, wr, hr, ar, s7db, s7m 중 하나)"
         )),
     }
 }
