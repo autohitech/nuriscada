@@ -282,3 +282,33 @@ async fn wrxy_쓰기_후_읽힌다() {
     );
     assert!(sim.state().w[0] == 11 && sim.state().r[1] == 22);
 }
+
+#[tokio::test]
+async fn 다중_d와_m_쓰기_후_읽힌다() {
+    let (sim, mut client) = setup().await;
+    client
+        .write_multiple(0, SPACE_D, 0, &[11, 22], &[])
+        .await
+        .unwrap();
+    client
+        .write_multiple(0, SPACE_M, 0, &[], &[true, false, true])
+        .await
+        .unwrap();
+    assert_eq!(
+        client
+            .read(&block(SPACE_D, 0, 2, DataKind::Word))
+            .await
+            .unwrap(),
+        BlockData::Words(vec![11, 22])
+    );
+    assert_eq!(
+        client
+            .read(&block(SPACE_M, 0, 3, DataKind::Bit))
+            .await
+            .unwrap(),
+        BlockData::Bits(vec![true, false, true])
+    );
+    assert_eq!(sim.state().d[0], 11);
+    assert_eq!(sim.state().d[1], 22);
+    assert_eq!(&sim.state().m[0..3], &[true, false, true]);
+}

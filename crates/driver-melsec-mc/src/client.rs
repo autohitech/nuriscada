@@ -169,6 +169,64 @@ impl MelsecMcClient {
         }
         result
     }
+
+    /// 다중 워드(D·W·R) 또는 비트(M·X·Y)를 한 번에 쓴다. `unit`은 무시한다.
+    /// 불명확한 결과를 자동 재시도하지 않는다.
+    pub async fn write_multiple(
+        &mut self,
+        _unit: u8,
+        space: u16,
+        address: u16,
+        words: &[u16],
+        bits: &[bool],
+    ) -> Result<(), DriverError> {
+        let req = match space {
+            SPACE_D | SPACE_W | SPACE_R => WriteRequest::Words {
+                code: code_for(space).expect("읽기 영역 번호").0,
+                head: u32::from(address),
+                values: words.to_vec(),
+            },
+            SPACE_M | SPACE_X | SPACE_Y => WriteRequest::Bits {
+                code: code_for(space).expect("읽기 영역 번호").0,
+                head: u32::from(address),
+                values: bits.to_vec(),
+            },
+            _ => {
+                return Err(DriverError::InvalidRequest(format!(
+                    "다중 쓰기는 D·W·R·M·X·Y 영역만 지원한다: {space}"
+                )));
+            }
+        };
+        let frame = encode_write_request(&req)?;
+
+        let started = Instant::now();
+        let result = async {
+            self.connect().await?;
+            let stream = self.stream.as_mut().expect("방금 연결했다");
+            timeout(self.timeout, Self::exchange_write(stream, &frame))
+                .await
+                .map_err(|_| DriverError::Timeout)?
+        }
+        .await;
+
+        match &result {
+            Ok(()) => {
+                self.status.requests_ok += 1;
+                self.status.last_round_trip = Some(started.elapsed());
+            }
+            Err(e) => {
+                self.status.requests_failed += 1;
+                // 장치가 오류를 응답한 경우 연결은 정상이다. 그 밖의 오류는 연결을 버린다.
+                if !matches!(
+                    e,
+                    DriverError::Device { .. } | DriverError::InvalidRequest(_)
+                ) {
+                    self.drop_connection();
+                }
+            }
+        }
+        result
+    }
 }
 
 impl Driver for MelsecMcClient {

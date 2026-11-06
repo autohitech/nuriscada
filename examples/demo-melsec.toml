@@ -2,7 +2,7 @@
 #   cargo run -p nuriscada-sim-melsec -- --demo
 #   cargo run -p nuriscada-server -- --config examples/demo-melsec.toml --init-admin admin
 #   cargo run -p nuriscada-server -- --config examples/demo-melsec.toml --enable-writes
-# 쓰기는 D·M 영역만 허용한다. X·Y 주소는 16진 장치 번호다(X10 = 0x10).
+# 쓰기는 D·W·R·M·X·Y 영역에 허용한다. X·Y 주소는 16진 장치 번호다(X10 = 0x10).
 
 [server]
 listen = "127.0.0.1:8081"

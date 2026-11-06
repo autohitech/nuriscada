@@ -801,25 +801,34 @@ enum BatchStep {
     Multi(Vec<usize>),
 }
 
-/// 배치 묶음 계획. MODBUS 코일·보유 레지스터의 같은 장치·유닛·연속 주소만 묶고,
-/// 상한을 넘기면 나눈다. 순서는 바꾸지 않는다.
-fn plan_batch_steps(devices: &[nuriscada_project::Device], ready: &[Ready]) -> Vec<BatchStep> {
+/// 배치 묶음 계획. 같은 장치·유닛·연속 주소만 묶고, 상한을 넘기면 나눈다. 순서는 바꾸지 않는다.
+/// 묶음 대상: MODBUS 코일·보유 레지스터(15·16), MELSEC D·W·R·M·X·Y(1401).
+fn batch_cap(device: &nuriscada_project::Device, space: Space) -> Option<usize> {
+    use nuriscada_driver_melsec_mc::protocol::{MAX_BIT_POINTS, MAX_WORD_POINTS};
     use nuriscada_driver_modbus_tcp::protocol::{MAX_WRITE_COILS, MAX_WRITE_REGISTERS};
+    match &device.driver {
+        DriverConfig::ModbusTcp { .. } => match space {
+            Space::Coil => Some(MAX_WRITE_COILS),
+            Space::Holding => Some(MAX_WRITE_REGISTERS),
+            _ => None,
+        },
+        DriverConfig::MelsecMc { .. } => match space {
+            Space::MelsecD | Space::MelsecW | Space::MelsecR => Some(MAX_WORD_POINTS as usize),
+            Space::MelsecM | Space::MelsecX | Space::MelsecY => Some(MAX_BIT_POINTS as usize),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn plan_batch_steps(devices: &[nuriscada_project::Device], ready: &[Ready]) -> Vec<BatchStep> {
     let mut steps = Vec::new();
     let mut i = 0;
     while i < ready.len() {
         let first = &ready[i];
-        let batchable = matches!(
-            &devices[first.tag.device].driver,
-            DriverConfig::ModbusTcp { .. }
-        ) && matches!(first.tag.space, Space::Coil | Space::Holding);
+        let cap = batch_cap(&devices[first.tag.device], first.tag.space);
         let mut j = i + 1;
-        if batchable {
-            let cap = if matches!(first.tag.space, Space::Coil) {
-                MAX_WRITE_COILS
-            } else {
-                MAX_WRITE_REGISTERS
-            };
+        if let Some(cap) = cap {
             while j < ready.len() {
                 let next = &ready[j];
                 if next.tag.device != first.tag.device
@@ -982,37 +991,70 @@ pub(super) async fn write_batch(
             BatchStep::Multi(positions) => {
                 let first = &ready[positions[0]];
                 let device = &project.devices[first.tag.device];
-                let address = match &device.driver {
-                    DriverConfig::ModbusTcp { address } => address.clone(),
-                    _ => unreachable!("묶음은 MODBUS 장치만 쓴다"),
-                };
-                let mut driver = ModbusTcpClient::new(address, device.timeout);
-                let outcome = match first.tag.space {
-                    Space::Coil => {
-                        let bits: Vec<bool> =
-                            positions.iter().map(|&p| ready[p].raw == 1).collect();
-                        driver
-                            .write_multiple(
-                                first.tag.unit,
-                                Space::Coil.code(),
-                                first.tag.address,
-                                &bits,
-                                &[],
-                            )
-                            .await
+                let outcome = match &device.driver {
+                    DriverConfig::ModbusTcp { address } => {
+                        let mut driver = ModbusTcpClient::new(address.clone(), device.timeout);
+                        match first.tag.space {
+                            Space::Coil => {
+                                let bits: Vec<bool> =
+                                    positions.iter().map(|&p| ready[p].raw == 1).collect();
+                                driver
+                                    .write_multiple(
+                                        first.tag.unit,
+                                        Space::Coil.code(),
+                                        first.tag.address,
+                                        &bits,
+                                        &[],
+                                    )
+                                    .await
+                            }
+                            _ => {
+                                let words: Vec<u16> =
+                                    positions.iter().map(|&p| ready[p].raw).collect();
+                                driver
+                                    .write_multiple(
+                                        first.tag.unit,
+                                        Space::Holding.code(),
+                                        first.tag.address,
+                                        &[],
+                                        &words,
+                                    )
+                                    .await
+                            }
+                        }
                     }
-                    _ => {
-                        let words: Vec<u16> = positions.iter().map(|&p| ready[p].raw).collect();
-                        driver
-                            .write_multiple(
-                                first.tag.unit,
-                                Space::Holding.code(),
-                                first.tag.address,
-                                &[],
-                                &words,
-                            )
-                            .await
+                    DriverConfig::MelsecMc { address } => {
+                        let mut driver = MelsecMcClient::new(address.clone(), device.timeout);
+                        match first.tag.space {
+                            Space::MelsecM | Space::MelsecX | Space::MelsecY => {
+                                let bits: Vec<bool> =
+                                    positions.iter().map(|&p| ready[p].raw == 1).collect();
+                                driver
+                                    .write_multiple(
+                                        first.tag.unit,
+                                        first.tag.space.code(),
+                                        first.tag.address,
+                                        &[],
+                                        &bits,
+                                    )
+                                    .await
+                            }
+                            _ => {
+                                let words: Vec<u16> =
+                                    positions.iter().map(|&p| ready[p].raw).collect();
+                                driver
+                                    .write_multiple(
+                                        first.tag.unit,
+                                        first.tag.space.code(),
+                                        first.tag.address,
+                                        &words,
+                                        &[],
+                                    )
+                                    .await
+                            }
+                        }
                     }
+                    _ => unreachable!("묶음은 MODBUS·MELSEC 장치만 쓴다"),
                 };
                 for pos in positions {
                     let r = &ready[pos];
@@ -1121,6 +1163,37 @@ mod tests {
             vec![
                 BatchStep::Multi((0..123).collect()),
                 BatchStep::Multi((123..130).collect()),
+            ]
+        );
+    }
+
+    fn melsec_device() -> Device {
+        Device {
+            name: "plc".to_string(),
+            driver: DriverConfig::MelsecMc {
+                address: "127.0.0.1:5007".to_string(),
+            },
+            timeout: Duration::from_millis(500),
+            scan: Duration::from_millis(100),
+        }
+    }
+
+    #[test]
+    fn melsec_연속_주소는_묶고_다른_드라이버와_섞지_않는다() {
+        let devices = vec![device(), melsec_device()];
+        let ready = vec![
+            ready_tag(1, Space::MelsecD, 0),
+            ready_tag(1, Space::MelsecD, 1),
+            ready_tag(0, Space::Coil, 0),
+            ready_tag(1, Space::MelsecM, 10),
+            ready_tag(1, Space::MelsecM, 11),
+        ];
+        assert_eq!(
+            plan_batch_steps(&devices, &ready),
+            vec![
+                BatchStep::Multi(vec![0, 1]),
+                BatchStep::Single(2),
+                BatchStep::Multi(vec![3, 4]),
             ]
         );
     }
