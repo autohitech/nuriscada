@@ -331,6 +331,20 @@ pub enum WriteRequest {
         /// 쓸 비트 값.
         values: Vec<bool>,
     },
+    /// WR 비트 쓰기(비트 번호 = 워드×16 + 비트).
+    WrBits {
+        /// 시작 비트 번호.
+        start_bit: u32,
+        /// 쓸 비트 값.
+        values: Vec<bool>,
+    },
+    /// HR 비트 쓰기(비트 번호 = 워드×16 + 비트).
+    HrBits {
+        /// 시작 비트 번호.
+        start_bit: u32,
+        /// 쓸 비트 값.
+        values: Vec<bool>,
+    },
 }
 
 /// 쓰기 요청 전체(TCP 머리 16바이트 + FINS 프레임)를 만든다.
@@ -356,7 +370,9 @@ pub fn encode_write_request(
                 values.len(),
             )
         }
-        WriteRequest::CioBits { start_bit, values } => {
+        WriteRequest::CioBits { start_bit, values }
+        | WriteRequest::WrBits { start_bit, values }
+        | WriteRequest::HrBits { start_bit, values } => {
             if values.is_empty() || values.len() > usize::from(MAX_WORD_ITEMS) {
                 return Err(DriverError::InvalidRequest(format!(
                     "비트 쓰기 개수 {}는 1~{MAX_WORD_ITEMS}이어야 한다",
@@ -369,8 +385,13 @@ pub fn encode_write_request(
                     "비트 번호 {start_bit}가 범위를 벗어났다"
                 )));
             }
+            let area = match req {
+                WriteRequest::CioBits { .. } => AREA_CIO_BIT,
+                WriteRequest::WrBits { .. } => AREA_WR_BIT,
+                _ => AREA_HR_BIT,
+            };
             (
-                AREA_CIO_BIT,
+                area,
                 (word >> 8) as u8,
                 (word & 0xFF) as u8,
                 (start_bit % 16) as u8,
@@ -389,7 +410,9 @@ pub fn encode_write_request(
                 inner.extend_from_slice(&v.to_be_bytes());
             }
         }
-        WriteRequest::CioBits { values, .. } => {
+        WriteRequest::CioBits { values, .. }
+        | WriteRequest::WrBits { values, .. }
+        | WriteRequest::HrBits { values, .. } => {
             for v in values {
                 inner.push(u8::from(*v));
             }
@@ -540,6 +563,25 @@ mod tests {
         let frame = encode_read_request(0xFB, 0x0F, 1, &hr).unwrap();
         assert_eq!(frame[28..32], [0x32, 0x00, 0x02, 0x03]);
         assert_eq!(frame[32..34], [0x00, 0x02]);
+    }
+
+    #[test]
+    fn wr_hr_비트_쓰기_요청_인코딩() {
+        // WR 워드 2 bit 3, HR 워드 4 bit 1.
+        let wr = WriteRequest::WrBits {
+            start_bit: 35,
+            values: vec![true],
+        };
+        let frame = encode_write_request(0xFB, 0x0F, 1, &wr).unwrap();
+        assert_eq!(frame[28..34], [0x31, 0x00, 0x02, 0x03, 0x00, 0x01]);
+        assert_eq!(frame[34..35], [0x01]);
+        let hr = WriteRequest::HrBits {
+            start_bit: 65,
+            values: vec![true],
+        };
+        let frame = encode_write_request(0xFB, 0x0F, 1, &hr).unwrap();
+        assert_eq!(frame[28..34], [0x32, 0x00, 0x04, 0x01, 0x00, 0x01]);
+        assert_eq!(frame[34..35], [0x01]);
     }
 
     #[test]

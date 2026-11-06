@@ -298,7 +298,7 @@ alarm = { kind = 0 }
 
 #[test]
 fn fins_장치의_쓰기와_영역_혼용을_검사한다() {
-    // dm·cio 쓰기 허용.
+    // dm·cio·wr·hr 쓰기 허용.
     let p = Project::from_toml(FINS).unwrap();
     assert_eq!(p.devices.len(), 1);
     assert_eq!(p.tags.len(), 2);
@@ -308,18 +308,19 @@ fn fins_장치의_쓰기와_영역_혼용을_검사한다() {
     assert_eq!(p, reparsed);
 
     let writable = format!(
-        "{FINS}\n[[tag]]\nname = \"W\"\ndevice = \"omron1\"\nspace = \"dm\"\naddress = 1\ntype = \"analog\"\nscale = {{ plc_base = 0, plc_full = 100, base = 0, full = 100 }}\nwritable = true\n\n[[tag]]\nname = \"C1\"\ndevice = \"omron1\"\nspace = \"cio\"\naddress = 19\ntype = \"digital\"\nwritable = true\n"
+        "{FINS}\n[[tag]]\nname = \"W\"\ndevice = \"omron1\"\nspace = \"dm\"\naddress = 1\ntype = \"analog\"\nscale = {{ plc_base = 0, plc_full = 100, base = 0, full = 100 }}\nwritable = true\n\n[[tag]]\nname = \"C1\"\ndevice = \"omron1\"\nspace = \"cio\"\naddress = 19\ntype = \"digital\"\nwritable = true\n\n[[tag]]\nname = \"W1\"\nwritable = true\ndevice = \"omron1\"\nspace = \"wr\"\naddress = 48\ntype = \"digital\"\n"
     );
     let p = Project::from_toml(&writable).unwrap();
     assert!(p.tags.iter().any(|t| t.name == "W" && t.writable));
     assert!(p.tags.iter().any(|t| t.name == "C1" && t.writable));
+    assert!(p.tags.iter().any(|t| t.name == "W1" && t.writable));
 
     let mixed = FINS.replace("space = \"dm\"", "space = \"holding\"");
     assert!(err(&mixed).contains("쓸 수 없다"));
 }
 
 #[test]
-fn fins_wr_hr_읽기는_받고_쓰기는_거부한다() {
+fn fins_wr_hr_읽기를_받아들인다() {
     let tags = format!(
         "{FINS}\n[[tag]]\nname = \"W\"\ndevice = \"omron1\"\nspace = \"wr\"\naddress = 19\ntype = \"digital\"\n\n[[tag]]\nname = \"H\"\ndevice = \"omron1\"\nspace = \"hr\"\naddress = 32\ntype = \"digital\"\n"
     );
@@ -328,11 +329,6 @@ fn fins_wr_hr_읽기는_받고_쓰기는_거부한다() {
     assert_eq!(p.tags[3].space, Space::FinsHr);
     let reparsed = Project::from_toml(&p.to_toml()).unwrap();
     assert_eq!(p, reparsed);
-
-    let writable = format!(
-        "{tags}\n[[tag]]\nname = \"W1\"\nwritable = true\ndevice = \"omron1\"\nspace = \"wr\"\naddress = 0\ntype = \"digital\"\n"
-    );
-    assert!(err(&writable).contains("dm·cio 영역만"));
 }
 
 const S7: &str = r#"

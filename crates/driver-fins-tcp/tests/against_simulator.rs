@@ -233,3 +233,27 @@ async fn wr_hr_비트를_읽는다() {
         BlockData::Bits(vec![true])
     );
 }
+
+#[tokio::test]
+async fn wr_쓰기_후_읽힌다() {
+    let (sim, mut client) = setup().await;
+    // WR 비트 35(= 워드 2 bit 3)를 켰다 끈다.
+    client.write_single(0, SPACE_WR, 35, 1).await.unwrap();
+    assert_eq!(
+        client
+            .read(&block(SPACE_WR, 35, 1, DataKind::Bit))
+            .await
+            .unwrap(),
+        BlockData::Bits(vec![true])
+    );
+    assert_eq!(sim.state().wr[2] & 0x0008, 0x0008);
+    client.write_single(0, SPACE_WR, 35, 0).await.unwrap();
+    assert_eq!(
+        client
+            .read(&block(SPACE_WR, 35, 1, DataKind::Bit))
+            .await
+            .unwrap(),
+        BlockData::Bits(vec![false])
+    );
+    assert_eq!(sim.state().wr[2] & 0x0008, 0);
+}

@@ -591,6 +591,8 @@ fn raw_value(space: Space, value: &Value) -> Option<u16> {
         | Space::MelsecY
         | Space::XgtMx
         | Space::FinsCio
+        | Space::FinsWr
+        | Space::FinsHr
         | Space::S7M => value.as_bool().map(u16::from),
         Space::Holding
         | Space::MelsecD

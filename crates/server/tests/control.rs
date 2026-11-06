@@ -1207,6 +1207,85 @@ writable=true
 }
 
 #[tokio::test]
+async fn fins_wr_쓰기가_장치에_닿는다() {
+    use nuriscada_sim_fins::Simulator as FinsSim;
+    let sim = FinsSim::start("127.0.0.1:0", 300, 64).await.unwrap();
+    let project = Arc::new(
+        Project::from_toml(&format!(
+            r#"
+[[device]]
+name="omron1"
+driver="fins-tcp"
+address="{}"
+scan_ms=20
+[[tag]]
+name="WRK"
+device="omron1"
+space="wr"
+address=35
+type="digital"
+writable=true
+"#,
+            sim.addr()
+        ))
+        .unwrap(),
+    );
+    let ops = Operations::open_with_mode(
+        std::path::Path::new(":memory:"),
+        project.clone(),
+        true,
+        false,
+    )
+    .unwrap();
+    ops.create_user("operator", PASSWORD, Role::Operator, false, "cli", "cli")
+        .unwrap();
+    let hub = Hub::new(&project);
+    let archive = ops.start_archive(hub.clone());
+    let scanners = start_scanners(&project, &hub);
+    ops.attach_scanners(scanners).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router_with_operations(hub, addr, None, ops.clone());
+    let _task = tokio::spawn(async move {
+        let _archive = archive;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let cookie = login_at(addr, false, "operator").await;
+    // 첫 스캔이 품질을 Good으로 올릴 때까지 기다린다.
+    for _ in 0..50 {
+        let (_, _, tags) = request(addr, "GET", "/api/v1/tags", &cookie, json!({}), "").await;
+        let good = tags["tags"]
+            .as_array()
+            .map(|ts| {
+                ts.iter()
+                    .all(|t| t.get("quality").and_then(|q| q.as_str()) == Some("good"))
+            })
+            .unwrap_or(false);
+        if good {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/WRK",
+        &cookie,
+        json!({"value": true}),
+        "X-NuriScada-Request: 1\r\n",
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(sim.state().wr[2] & 0x0008, 0x0008);
+}
+
+#[tokio::test]
 async fn s7_쓰기가_장치에_닿고_감사에_남는다() {
     use nuriscada_sim_s7::Simulator as S7Sim;
     let sim = S7Sim::start("127.0.0.1:0").await.unwrap();
