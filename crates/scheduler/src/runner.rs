@@ -56,6 +56,48 @@ pub async fn run_device<D: Driver>(
         n = next;
     }
 }
+/// 장치 스캔 작업을 감시한다. 드라이버 결함으로 작업이 비정상 종료해도 허브와 다른 장치는
+/// 그대로 두고, 이 장치만 1초 뒤 새 드라이버로 다시 시작한다. 정상 종료(중지 요청)면 끝낸다.
+pub async fn supervise_device<F, D>(
+    hub: Arc<Hub>,
+    project: Arc<Project>,
+    device: usize,
+    mut make_driver: F,
+    blocks: Vec<PlannedBlock>,
+    mut shutdown: watch::Receiver<bool>,
+) where
+    F: FnMut() -> D + Send + 'static,
+    D: Driver + 'static,
+{
+    loop {
+        let driver = make_driver();
+        let handle = tokio::spawn(run_device(
+            Arc::clone(&hub),
+            Arc::clone(&project),
+            device,
+            driver,
+            blocks.clone(),
+            shutdown.clone(),
+        ));
+        match handle.await {
+            Ok(()) => return,
+            Err(e) if e.is_panic() => {
+                hub.record_restart(device, "스캔 작업이 비정상 종료해 다시 시작한다");
+                if *shutdown.borrow() {
+                    return;
+                }
+                tokio::select! {
+                    () = tokio::time::sleep(Duration::from_secs(1)) => {}
+                    _ = shutdown.changed() => {
+                        return;
+                    }
+                }
+            }
+            // 취소되면 같이 끝낸다.
+            Err(_) => return,
+        }
+    }
+}
 
 /// 계획된 모든 블록을 한 번 읽는다. 마지막 오류의 설명을 돌려준다.
 async fn scan_once<D: Driver>(
@@ -315,5 +357,53 @@ alarm = { kind = 0 }
         assert!(d.overruns >= 1, "overruns = {}", d.overruns);
         stop.send(true).unwrap();
         handle.await.unwrap();
+    }
+    #[tokio::test(start_paused = true)]
+    async fn panicking_driver_restarts_without_touching_other_devices() {
+        // 전체 재시작을 통틀어 첫 읽기에서 한 번만 패닉하는 드라이버.
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct PanicOnce {
+            armed: Arc<AtomicBool>,
+        }
+        impl Driver for PanicOnce {
+            async fn connect(&mut self) -> Result<(), DriverError> {
+                Ok(())
+            }
+            async fn read(&mut self, block: &ReadBlock) -> Result<BlockData, DriverError> {
+                if self.armed.swap(false, Ordering::SeqCst) {
+                    panic!("시험용 드라이버 결함");
+                }
+                Ok(match block.kind {
+                    nuriscada_driver_api::DataKind::Word => {
+                        BlockData::Words(vec![0; usize::from(block.count)])
+                    }
+                    nuriscada_driver_api::DataKind::Bit => {
+                        BlockData::Bits(vec![false; usize::from(block.count)])
+                    }
+                })
+            }
+            fn status(&self) -> LinkStatus {
+                LinkStatus::initial()
+            }
+        }
+        let project = Arc::new(Project::from_toml(PROJECT).unwrap());
+        let hub = Hub::new(&project);
+        let blocks = plan(&project, PlanLimits::MODBUS);
+        let armed = Arc::new(AtomicBool::new(true));
+        let (_stop, rx) = watch::channel(false);
+        let handle = tokio::spawn(supervise_device(
+            Arc::clone(&hub),
+            project,
+            0,
+            move || PanicOnce { armed: Arc::clone(&armed) },
+            blocks,
+            rx,
+        ));
+        tokio::time::sleep(Duration::from_millis(3000)).await;
+        let d = hub.devices()[0].clone();
+        assert_eq!(d.restarts, 1, "한 번 재시작한다");
+        assert!(d.last_error.is_some());
+        assert_eq!(level(&hub).quality, Quality::Good, "재시작 후 정상 스캔한다");
+        handle.abort();
     }
 }

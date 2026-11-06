@@ -32,6 +32,7 @@ export const ko = {
   badQuality: "통신 불량",
   devices: "장치",
   scans: "스캔",
+  restarts: "재시작",
   jitter: "지터 99%",
   theme: "테마",
   themeDark: "어둡게",

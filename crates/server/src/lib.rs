@@ -27,7 +27,7 @@ use nuriscada_driver_s7::S7Client;
 use nuriscada_driver_xgt_fenet::XgtFenetClient;
 use nuriscada_project::{DriverConfig, Project};
 use nuriscada_scheduler::wire::encode_snapshot;
-use nuriscada_scheduler::{Hub, PlanLimits, plan_with, run_device};
+use nuriscada_scheduler::{Hub, PlanLimits, plan_with, supervise_device};
 use serde_json::json;
 use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
@@ -111,21 +111,23 @@ pub fn start_scanners(project: &Arc<Project>, hub: &Arc<Hub>) -> Scanners {
     let (shutdown, rx) = watch::channel(false);
     let mut tasks = vec![hub.spawn_publisher(project.server.publish, rx.clone())];
     for (index, device) in project.devices.iter().enumerate() {
-        let driver = match &device.driver {
+        let config = device.driver.clone();
+        let timeout = device.timeout;
+        let make_driver = move || match &config {
             DriverConfig::ModbusTcp { address } => {
-                AnyDriver::ModbusTcp(ModbusTcpClient::new(address.clone(), device.timeout))
+                AnyDriver::ModbusTcp(ModbusTcpClient::new(address.clone(), timeout))
             }
             DriverConfig::MelsecMc { address } => {
-                AnyDriver::MelsecMc(MelsecMcClient::new(address.clone(), device.timeout))
+                AnyDriver::MelsecMc(MelsecMcClient::new(address.clone(), timeout))
             }
             DriverConfig::XgtFenet { address } => {
-                AnyDriver::XgtFenet(XgtFenetClient::new(address.clone(), device.timeout))
+                AnyDriver::XgtFenet(XgtFenetClient::new(address.clone(), timeout))
             }
             DriverConfig::FinsTcp { address } => {
-                AnyDriver::FinsTcp(FinsTcpClient::new(address.clone(), device.timeout))
+                AnyDriver::FinsTcp(FinsTcpClient::new(address.clone(), timeout))
             }
             DriverConfig::S7Tcp { address } => {
-                AnyDriver::S7Tcp(S7Client::new(address.clone(), device.timeout))
+                AnyDriver::S7Tcp(S7Client::new(address.clone(), timeout))
             }
         };
         let device_blocks = blocks
@@ -133,11 +135,11 @@ pub fn start_scanners(project: &Arc<Project>, hub: &Arc<Hub>) -> Scanners {
             .filter(|b| b.device == index)
             .cloned()
             .collect();
-        tasks.push(tokio::spawn(run_device(
+        tasks.push(tokio::spawn(supervise_device(
             Arc::clone(hub),
             Arc::clone(project),
             index,
-            driver,
+            make_driver,
             device_blocks,
             rx.clone(),
         )));

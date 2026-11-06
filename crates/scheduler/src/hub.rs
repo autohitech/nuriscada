@@ -111,6 +111,8 @@ pub struct DeviceStatus {
     pub jitter_max_us: u64,
     /// 마지막 오류 설명.
     pub last_error: Option<String>,
+    /// 스캔 작업이 비정상 종료 후 재시작한 횟수.
+    pub restarts: u64,
 }
 
 /// 방송하는 프레임 하나. 이미 부호화되어 있어 모든 수신자가 같은 문자열을 공유한다.
@@ -229,6 +231,7 @@ impl Hub {
                 jitter_p99_us: None,
                 jitter_max_us: 0,
                 last_error: None,
+                restarts: 0,
             })
             .collect();
         let jitter = project.devices.iter().map(|_| JitterStats::new()).collect();
@@ -310,6 +313,7 @@ impl Hub {
                 jitter_p99_us: None,
                 jitter_max_us: 0,
                 last_error: None,
+                restarts: 0,
             })
             .collect();
         let jitter = project.devices.iter().map(|_| JitterStats::new()).collect();
@@ -537,6 +541,13 @@ impl Hub {
         d.overruns += overruns;
         d.jitter_p99_us = p99;
         d.jitter_max_us = max;
+    }
+    /// 스캔 작업의 비정상 종료와 재시작을 기록한다. 호출자는 작업을 다시 시작해야 한다.
+    pub(crate) fn record_restart(&self, device: usize, reason: &str) {
+        let mut inner = self.write();
+        let d = &mut inner.devices[device];
+        d.restarts += 1;
+        d.last_error = Some(reason.to_string());
     }
 
     /// 드라이버 상태와 마지막 오류를 반영한다.

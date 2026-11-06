@@ -31,6 +31,7 @@ export const en: Messages = {
   badQuality: "Comm. error",
   devices: "Devices",
   scans: "Scans",
+  restarts: "Restarts",
   jitter: "Jitter p99",
   theme: "Theme",
   themeDark: "Dark",

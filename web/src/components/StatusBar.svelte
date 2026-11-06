@@ -62,6 +62,7 @@
         <span class="dev">{d.name}</span>
         <StateChip severity={d.connected ? "normal" : "bad"} label={d.connected ? m.connected : m.badQuality} />
         <span class="muted">{m.scans} {d.scans}</span>
+        {#if d.restarts > 0}<span class="muted">{m.restarts} {d.restarts}</span>{/if}
         <span class="muted">{m.jitter} {formatMicros(d.jitter_p99_us)}</span>
       </li>
     {/each}

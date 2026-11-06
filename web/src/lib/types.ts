@@ -38,6 +38,7 @@ export interface DeviceStatus {
   jitter_p99_us: number | null;
   jitter_max_us: number;
   last_error: string | null;
+  restarts: number;
 }
 
 export interface StatusDoc {
