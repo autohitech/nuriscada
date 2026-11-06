@@ -193,3 +193,36 @@ async fn connect_failure_is_a_connection_error() {
     );
     assert_eq!(c.status().state, LinkState::Disconnected);
 }
+
+#[tokio::test]
+async fn writes_multiple_coils_and_registers() {
+    let (sim, mut client) = setup().await;
+    let coils = [
+        true, false, true, true, false, false, false, true, false, true,
+    ];
+    client
+        .write_multiple(1, SPACE_COILS, 0, &coils, &[])
+        .await
+        .unwrap();
+    assert_eq!(sim.state().coils[..10], coils);
+    client
+        .write_multiple(1, SPACE_HOLDING_REGISTERS, 10, &[], &[1, 2, 3])
+        .await
+        .unwrap();
+    assert_eq!(sim.state().holding_registers[10..13], [1, 2, 3]);
+    // 읽기 전용 영역과 빈 묶음·방송 유닛은 거부한다.
+    assert!(matches!(
+        client
+            .write_multiple(1, SPACE_INPUT_REGISTERS, 0, &[], &[1])
+            .await,
+        Err(DriverError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        client.write_multiple(1, SPACE_COILS, 0, &[], &[]).await,
+        Err(DriverError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        client.write_multiple(0, SPACE_COILS, 0, &[true], &[]).await,
+        Err(DriverError::InvalidRequest(_))
+    ));
+}

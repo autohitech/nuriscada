@@ -272,6 +272,7 @@ fn build_router(
         .route("/api/v1/history/tags", get(control::tag_history))
         .route("/api/v1/control/tags", get(control::control_tags))
         .route("/api/v1/control/tags/{name}", post(control::write_tag))
+        .route("/api/v1/control/tags/batch", post(control::write_batch))
         .route(
             "/api/v1/project",
             get(control::get_project)

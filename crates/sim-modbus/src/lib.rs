@@ -118,12 +118,69 @@ fn exception(txn: [u8; 2], unit: u8, function: u8, code: u8) -> Vec<u8> {
     vec![txn[0], txn[1], 0, 0, 0, 3, unit, function | 0x80, code]
 }
 
+fn respond_write_multiple(
+    frame: &[u8],
+    txn: [u8; 2],
+    unit: u8,
+    function: u8,
+    state: &mut State,
+) -> Option<Vec<u8>> {
+    // 머리 7 + 기능 1 + 시작 2 + 개수 2 + 바이트 수 1 + 데이터.
+    if frame.len() < 13 {
+        return Some(exception(txn, unit, function, 3));
+    }
+    let start = usize::from(u16::from_be_bytes([frame[8], frame[9]]));
+    let count = usize::from(u16::from_be_bytes([frame[10], frame[11]]));
+    let byte_count = usize::from(frame[12]);
+    let data = &frame[13..];
+    if function == 15 {
+        if count == 0 || count > 1968 || byte_count != count.div_ceil(8) {
+            return Some(exception(txn, unit, function, 3));
+        }
+    } else if count == 0 || count > 123 || byte_count != count * 2 {
+        return Some(exception(txn, unit, function, 3));
+    }
+    if data.len() != byte_count {
+        return Some(exception(txn, unit, function, 3));
+    }
+    if function == 15 {
+        if start + count > state.coils.len() {
+            return Some(exception(txn, unit, function, 2));
+        }
+        for (i, &byte) in data.iter().enumerate() {
+            for b in 0..8 {
+                let idx = i * 8 + b;
+                if idx >= count {
+                    break;
+                }
+                state.coils[start + idx] = byte & (1 << b) != 0;
+            }
+        }
+    } else if start + count > state.holding_registers.len() {
+        return Some(exception(txn, unit, function, 2));
+    } else {
+        for (i, pair) in data.as_chunks::<2>().0.iter().enumerate() {
+            state.holding_registers[start + i] = u16::from_be_bytes([pair[0], pair[1]]);
+        }
+    }
+    let mut out = vec![txn[0], txn[1], 0, 0, 0, 6, unit, function];
+    out.extend_from_slice(&(start as u16).to_be_bytes());
+    out.extend_from_slice(&(count as u16).to_be_bytes());
+    Some(out)
+}
+
 /// 요청 프레임(머리 포함)에 대한 응답을 만든다. 응답하지 않으면 `None`이다.
 fn respond(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
     let txn = [frame[0], frame[1]];
     let unit = frame[6];
     let function = frame[7];
-    if frame.len() != 12 || !(1..=6).contains(&function) {
+    if !(1..=6).contains(&function) && function != 15 && function != 16 {
+        return Some(exception(txn, unit, function, 1));
+    }
+    if function == 15 || function == 16 {
+        return respond_write_multiple(frame, txn, unit, function, state);
+    }
+    if frame.len() != 12 {
         return Some(exception(txn, unit, function, 1));
     }
     let start = usize::from(u16::from_be_bytes([frame[8], frame[9]]));
