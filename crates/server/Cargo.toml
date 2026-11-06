@@ -29,7 +29,7 @@ getrandom = "0.3"
 sha2 = "0.10"
 rusqlite = { version = "0.40", features = ["bundled"] }
 rpassword = "7"
-rumqttc = { version = "0.25.1", default-features = false }
+rumqttc = { version = "0.25.1", default-features = false, features = ["use-native-tls"] }
 [dev-dependencies]
 nuriscada-sim-modbus = { path = "../sim-modbus" }
 nuriscada-sim-melsec = { path = "../sim-melsec" }
