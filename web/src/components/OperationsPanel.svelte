@@ -23,6 +23,8 @@
   let selected = $state("");
   let rawValue = $state("0");
   let pending = $state<{ name: string; value: number | boolean } | null>(null);
+  let batchRows = $state<{ name: string; raw: string }[]>([]);
+  let batchResults = $state<{ name: string; outcome: string }[] | null>(null);
   let events = $state<{ seq: number; event: { time_ms: number; actor: string; source: string; action: string; target: string; detail: unknown } }[]>([]);
   let newName = $state("");
   let newPassword = $state("");
@@ -223,6 +225,33 @@
     }
   }
 
+  function addBatchRow() {
+    const first = targets[0]?.name ?? "";
+    batchRows = [...batchRows, { name: first, raw: "0" }];
+    batchResults = null;
+  }
+
+  function submitBatch(event: SubmitEvent) {
+    event.preventDefault(); message = ""; batchResults = null;
+    if (batchRows.length === 0 || batchRows.length > 64) { message = m.rawIntRange; return; }
+    const writes: { name: string; value: number | boolean }[] = [];
+    for (const row of batchRows) {
+      const target = targets.find(t => t.name === row.name);
+      if (!target) { message = m.enterTagName; return; }
+      if (target.kind === "bool") writes.push({ name: row.name, value: row.raw === "1" });
+      else {
+        if (!/^\d+$/.test(row.raw) || Number(row.raw) > 65535) { message = m.rawIntRange; return; }
+        writes.push({ name: row.name, value: Number(row.raw) });
+      }
+    }
+    void perform(async () => {
+      const res = await request("control/tags/batch", { writes }) as { ok: boolean; results: { name: string; outcome: string }[] };
+      batchRows = [];
+      batchResults = res.results;
+      message = res.ok ? m.batchDone : m.batchPartial;
+    });
+  }
+
   onMount(() => {
     void refresh();
     const timer = setInterval(() => void refresh(), 30000);
@@ -273,6 +302,34 @@
                 message = m.writeDone;
               })}>{m.confirmWrite}</button>
               <button disabled={busy} onclick={() => pending = null}>{m.cancel}</button>
+            </div>
+          {/if}
+        {/if}
+      </details>
+      <details>
+        <summary>{m.batchWrite}</summary>
+        {#if targets.length === 0}<p>{m.noWritableTags}</p>
+        {:else}
+          <form onsubmit={submitBatch}>
+            {#each batchRows as row, i (i)}
+              <div class="inline">
+                <label>{m.target} <select bind:value={row.name}>
+                  {#each targets as target (target.name)}<option value={target.name}>{target.name}</option>{/each}
+                </select></label>
+                {#if targets.find(t => t.name === row.name)?.kind === "bool"}
+                  <label>{m.colValue} <select bind:value={row.raw}><option value="0">OFF</option><option value="1">ON</option></select></label>
+                {:else}<label>{m.rawRegisterValue} <input inputmode="numeric" bind:value={row.raw} required /></label>{/if}
+                <button type="button" disabled={busy} onclick={() => { batchRows = batchRows.filter((_, j) => j !== i); batchResults = null; }}>{m.removeTag}</button>
+              </div>
+            {/each}
+            <div class="inline">
+              <button type="button" disabled={busy} onclick={addBatchRow}>{m.addRow}</button>
+              <button disabled={busy || batchRows.length === 0}>{m.reviewWrite}</button>
+            </div>
+          </form>
+          {#if batchResults}
+            <div class="audit">
+              {#each batchResults as r (r.name)}<p><strong>{r.name}</strong> · {r.outcome}</p>{/each}
             </div>
           {/if}
         {/if}

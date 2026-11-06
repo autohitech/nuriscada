@@ -119,6 +119,10 @@ export const en: Messages = {
   writeConfirm: (name, value) =>
     `Write ${value} to ${name}. Register values are raw values before scaling.`,
   writeDone: "The device acknowledged. The displayed value updates on the next scan.",
+  batchWrite: "Batch write",
+  addRow: "Add row",
+  batchDone: "All writes acknowledged.",
+  batchPartial: "Some writes were not acknowledged. See per-item outcomes.",
   confirmWrite: "Confirm and write",
   cancel: "Cancel",
   currentlyReadOnly: "Currently read-only.",
