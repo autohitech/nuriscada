@@ -45,7 +45,7 @@ fn error_detail(status: StatusCode, code: Code, detail: &str) -> Error {
     code.response(status, Some(detail))
 }
 fn internal(e: impl std::fmt::Display) -> Error {
-    eprintln!("조작 API 오류: {e}");
+    crate::log::emit("error", "api", &e.to_string());
     error(StatusCode::INTERNAL_SERVER_ERROR, Code::Internal)
 }
 
@@ -383,6 +383,28 @@ pub(super) async fn audit(
     .await?;
     Ok(Json(json!({"events":rows})))
 }
+/// 진단 번들: 버전·가동 시간·장치 진단·보관 상태·프로젝트 원문. 관리자만 로컬에서 받는다.
+pub(super) async fn diagnostics(
+    State(state): State<AppState>,
+    Extension(user): Extension<Principal>,
+    Extension(peer): Extension<Peer>,
+) -> Result<Json<Value>> {
+    let ops = operations(&state)?;
+    if user.role != Role::Admin
+        || ops.public_read_only
+        || !peer.loopback
+        || state.guard.allowed_hosts.is_none()
+    {
+        return Err(error(StatusCode::FORBIDDEN, Code::AdminRequired));
+    }
+    Ok(Json(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "uptime_s": state.hub.uptime_secs(),
+        "devices": state.hub.devices(),
+        "alarm_archive": ops.archive_status(),
+        "project_toml": ops.project().to_toml(),
+    })))
+}
 
 pub(super) async fn control_tags(State(state): State<AppState>) -> Result<Json<Value>> {
     let ops = operations(&state)?;
@@ -645,6 +667,44 @@ async fn execute_single(
     }
 }
 
+/// 인터록 조건을 검사한다. 모두 만족하면 `None`, 처음 어긴 조건의 설명을 돌려준다.
+/// 조건 태그가 없거나 품질이 나쁘면 조건 불충족으로 본다(닫힘 실패).
+fn check_interlock(
+    project: &nuriscada_project::Project,
+    hub_tags: &[nuriscada_scheduler::TagSnapshot],
+    tag: &nuriscada_project::Tag,
+) -> Option<String> {
+    use nuriscada_project::InterlockValue;
+    for cond in &tag.interlocks {
+        let name = &project.tags[cond.tag].name;
+        let current = hub_tags.iter().find(|t| t.name == *name);
+        let met = match current {
+            Some(cur) if cur.quality == nuriscada_scheduler::Quality::Good => {
+                match (&cond.value, &cur.value) {
+                    (
+                        InterlockValue::Bool(want),
+                        Some(nuriscada_scheduler::TagValue::Bool(have)),
+                    ) => want == have,
+                    (
+                        InterlockValue::Int(want),
+                        Some(nuriscada_scheduler::TagValue::Number(have)),
+                    ) => *want as f64 == *have,
+                    (
+                        InterlockValue::Text(want),
+                        Some(nuriscada_scheduler::TagValue::Text(have)),
+                    ) => want == have,
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        if !met {
+            return Some(format!("{name} 조건 불충족"));
+        }
+    }
+    None
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct WriteValue {
@@ -709,6 +769,23 @@ pub(super) async fn write_tag(
         .ok_or_else(|| error(StatusCode::NOT_FOUND, Code::TagNotFound))?;
     if current.quality != Quality::Good {
         return Err(error(StatusCode::CONFLICT, Code::WriteBadQuality));
+    }
+    let hub_tags = state.hub.tags();
+    if let Some(reason) = check_interlock(&project, &hub_tags, &tag) {
+        audit_write(
+            &ops,
+            user.username.clone(),
+            peer.source.clone(),
+            "write.denied",
+            name.clone(),
+            json!({"requested":input.value,"reason":reason}),
+        )
+        .await?;
+        return Err(error_detail(
+            StatusCode::FORBIDDEN,
+            Code::WriteInterlocked,
+            &reason,
+        ));
     }
     let old = serde_json::to_value(current.value).map_err(internal)?;
     let requested = input.value.clone();
@@ -953,6 +1030,19 @@ pub(super) async fn write_batch(
             results.push(json!({"name":w.name,"outcome":"bad_quality"}));
             continue;
         }
+        if let Some(reason) = check_interlock(&project, &hub_tags, &tag) {
+            audit_write(
+                &ops,
+                user.username.clone(),
+                peer.source.clone(),
+                "write.denied",
+                w.name.clone(),
+                json!({"requested":w.value,"reason":reason}),
+            )
+            .await?;
+            results.push(json!({"name":w.name,"outcome":"interlocked"}));
+            continue;
+        }
         let old = serde_json::to_value(current.value.clone()).map_err(internal)?;
         audit_write(
             &ops,
@@ -1105,6 +1195,7 @@ mod tests {
                 space,
                 address,
                 body: TagBody::Digital { alarm_kind: None },
+                interlocks: Vec::new(),
             },
             raw: 0,
             requested: Value::Null,
@@ -1196,5 +1287,65 @@ mod tests {
                 BatchStep::Multi(vec![3, 4]),
             ]
         );
+    }
+
+    #[test]
+    fn 문자열_조건은_정확히_일치할_때만_만족한다() {
+        use nuriscada_project::Project;
+        use nuriscada_scheduler::{TagSnapshot, TagValue};
+        let project = Project::from_toml(
+            r#"
+[[device]]
+name = "sim"
+driver = "modbus-tcp"
+address = "127.0.0.1:1"
+scan_ms = 100
+
+[[tag]]
+name = "MODE"
+device = "sim"
+space = "holding"
+address = 0
+type = "string"
+value = "AUTO"
+length = 4
+
+[[tag]]
+name = "MOTOR"
+device = "sim"
+space = "coil"
+address = 1
+type = "digital"
+writable = true
+
+[[tag.interlock]]
+tag = "MODE"
+value = "AUTO"
+"#,
+        )
+        .unwrap();
+        let snap = |value: Option<TagValue>| TagSnapshot {
+            name: "MODE".to_string(),
+            device: "sim".to_string(),
+            kind: "string",
+            value,
+            quality: Quality::Good,
+            changed_ms: 1,
+            unit_text: String::new(),
+            alarm_state: None,
+        };
+        let motor = project.tags.iter().find(|t| t.name == "MOTOR").unwrap();
+        assert!(
+            check_interlock(
+                &project,
+                &[snap(Some(TagValue::Text("AUTO".into())))],
+                motor
+            )
+            .is_none()
+        );
+        assert!(
+            check_interlock(&project, &[snap(Some(TagValue::Text("MAN".into())))], motor).is_some()
+        );
+        assert!(check_interlock(&project, &[snap(None)], motor).is_some());
     }
 }

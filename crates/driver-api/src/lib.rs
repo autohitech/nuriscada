@@ -140,11 +140,31 @@ pub trait Driver: Send {
 
     /// 현재 상태.
     fn status(&self) -> LinkStatus;
+    /// 마지막 송수신 프레임(진단용, 최대 256바이트씩). 아직 주고받지 않았으면 `None`.
+    fn last_frames(&self) -> Option<(Vec<u8>, Vec<u8>)> {
+        None
+    }
+}
+/// 진단용 16진수 미리보기. 바이트를 소문자 두 자리로 공백 없이 잇는다.
+pub fn hex_preview(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0xF) as usize] as char);
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hex_preview_is_lowercase_pairs() {
+        assert_eq!(hex_preview(&[0x00, 0x01, 0xAB, 0xFF]), "0001abff");
+        assert_eq!(hex_preview(&[]), "");
+    }
 
     #[test]
     fn block_data_len() {

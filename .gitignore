@@ -15,3 +15,5 @@ dist/
 * 3
 * 3.*
 dist/
+__pycache__/
+*.pyc

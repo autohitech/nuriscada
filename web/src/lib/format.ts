@@ -59,7 +59,57 @@ export function formatValue(value: number | boolean | string | null, on = "ON", 
   if (Object.is(value, -0)) return numberFormat().format(0);
   return numberFormat().format(value);
 }
+/** 가시성 조건: 값이 없거나 통신 불량이면 숨긴다(닫힘 실패). 0·거짓·빈 문자열도 숨긴다. */
+export function isVisible(value: number | boolean | string | null, quality: "good" | "bad"): boolean {
+  if (quality !== "good" || value === null) return false;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.length > 0;
+  return value !== 0;
+}
+export type AlarmSoundRule = "off" | "critical" | "warn" | "all";
 
+/** 소리 규칙에 따라 울릴지 정한다(순수 함수라 시험할 수 있다). */
+export function shouldBeep(rule: AlarmSoundRule, severity: Severity): boolean {
+  switch (rule) {
+    case "off":
+      return false;
+    case "critical":
+      return severity === "critical";
+    case "warn":
+      return severity === "critical" || severity === "warn";
+    case "all":
+      return severity !== "normal";
+  }
+}
+/** 탱크·게이지 채움 비율. 범위가 뒤집혔거나 값이 없으면 0으로 둔다. */
+export function fillRatio(value: number | null, min: number, max: number): number {
+  if (value === null) return 0;
+  const span = max - min;
+  if (!(span > 0)) return 0;
+  return Math.max(0, Math.min(1, (value - min) / span));
+}
+
+/** 운전·점등 판정: 참·0 초과면 켜짐이다. */
+export function isActive(value: boolean | number | string | null): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value > 0;
+  return false;
+}
+
+/** 회전 각도(도). 숫자는 그대로(360으로 나눈 나머지), 참은 90도다. 통신 불량이면 0도다. */
+export function rotationDegrees(value: boolean | number | string | null, quality: "good" | "bad"): number {
+  if (quality !== "good") return 0;
+  if (typeof value === "number") return ((value % 360) + 360) % 360;
+  if (value === true) return 90;
+  return 0;
+}
+/** x 이동 오프셋(px). 숫자는 ±500으로 자르고, 참은 +50이다. 통신 불량이면 0이다. */
+export function moveOffset(value: boolean | number | string | null, quality: "good" | "bad"): number {
+  if (quality !== "good") return 0;
+  if (typeof value === "number") return Math.max(-500, Math.min(500, value));
+  if (value === true) return 50;
+  return 0;
+}
 /** RFC 4180 인용 규칙으로 한 셀을 감싼다. */
 export function csvCell(text: string): string {
   if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;

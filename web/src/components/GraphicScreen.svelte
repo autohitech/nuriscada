@@ -4,7 +4,7 @@
   import { m } from "../lib/i18n.svelte";
   import { apiErrorMessage } from "../lib/api";
   import { onMount } from "svelte";
-  import { formatValue } from "../lib/format";
+  import { fillRatio, formatValue, isActive, isVisible, moveOffset, rotationDegrees } from "../lib/format";
   import { UndoStack } from "../lib/undo-stack";
   import type { Store } from "../lib/store.svelte";
   import type {
@@ -122,6 +122,9 @@
         kind,
         label: t.name,
         tag: t.name,
+        visible_tag: null,
+      rotate_tag: null,
+      move_tag: null,
         x: 24 + col * 190,
         y: 24 + row * 150,
         width: 170,
@@ -164,6 +167,7 @@
       if (!res.ok) return;
       const data = (await res.json()) as { screens?: ScreenSpec[] };
       if (Array.isArray(data.screens)) {
+        for (const s of data.screens) for (const w of s.widget) { w.visible_tag ??= null; w.rotate_tag ??= null; w.move_tag ??= null; }
         screens = data.screens;
         if (activeIndex >= screens.length) activeIndex = 0;
         clearHistory();
@@ -263,6 +267,9 @@
       kind,
       label: defaultTag ?? widgetKindLabel(kind),
       tag: defaultTag,
+      visible_tag: null,
+      rotate_tag: null,
+      move_tag: null,
       x: col,
       y: row,
       width: kind === "label" ? 200 : 160,
@@ -313,6 +320,9 @@
           kind: w.kind,
           label: w.label,
           tag: w.tag && w.tag.trim() ? w.tag.trim() : null,
+          visible_tag: w.visible_tag && w.visible_tag.trim() ? w.visible_tag.trim() : null,
+          rotate_tag: w.rotate_tag && w.rotate_tag.trim() ? w.rotate_tag.trim() : null,
+          move_tag: w.move_tag && w.move_tag.trim() ? w.move_tag.trim() : null,
           x: Number(w.x),
           y: Number(w.y),
           width: Number(w.width),
@@ -387,25 +397,11 @@
     dragState = null;
   }
 
-  function fillRatio(tag: TagSnapshot | undefined, w: GraphicWidgetSpec): number {
-    if (!tag || typeof tag.value !== "number") return 0;
-    const span = w.max - w.min;
-    if (span <= 0) return 0;
-    return Math.max(0, Math.min(1, (tag.value - w.min) / span));
-  }
-
-  function isActiveDigital(tag: TagSnapshot | undefined): boolean {
-    if (!tag) return false;
-    if (typeof tag.value === "boolean") return tag.value;
-    if (typeof tag.value === "number") return tag.value > 0;
-    return false;
-  }
-
   function widgetStroke(tag: TagSnapshot | undefined, isSelected: boolean): string {
     if (isSelected) return "var(--accent, #4ea1ff)";
     if (!tag) return "var(--border)";
-    if (tag.quality === "bad") return "var(--warn, #e5a100)";
-    if (tag.alarm_state && tag.alarm_state !== "NORMAL") return "var(--danger, #ff5d5d)";
+    if (tag.quality === "bad") return "var(--bad)";
+    if (tag.alarm_state && tag.alarm_state !== "NORMAL") return "var(--critical)";
     return "var(--border)";
   }
 
@@ -498,9 +494,15 @@
 
         {#each currentScreen.widget as w (w.id)}
           {@const tag = w.tag ? tagByName.get(w.tag) : undefined}
+          {@const vtag = w.visible_tag ? tagByName.get(w.visible_tag) : undefined}
+          {@const shown = !w.visible_tag || (vtag !== undefined && isVisible(vtag.value, vtag.quality))}
+          {@const rtag = w.rotate_tag ? tagByName.get(w.rotate_tag) : undefined}
+          {@const deg = rtag === undefined ? 0 : rotationDegrees(rtag.value, rtag.quality)}
+          {@const mtag = w.move_tag ? tagByName.get(w.move_tag) : undefined}
+          {@const dx = mtag === undefined ? 0 : moveOffset(mtag.value, mtag.quality)}
           {@const isSelected = editing && selectedWidgetId === w.id}
-          {@const ratio = fillRatio(tag, w)}
-          {@const active = isActiveDigital(tag)}
+          {@const ratio = fillRatio(typeof tag?.value === "number" ? tag.value : null, w.min, w.max)}
+          {@const active = isActive(tag?.value ?? null)}
           {@const stroke = widgetStroke(tag, isSelected)}
           <g
             class="scada-widget"
@@ -509,8 +511,11 @@
             aria-label={w.label || w.tag || w.id}
             data-widget-id={w.id}
             data-widget-kind={w.kind}
-            transform={`translate(${w.x}, ${w.y})`}
+            transform={`translate(${w.x + dx}, ${w.y})${deg === 0 ? "" : ` rotate(${deg} ${w.width / 2} ${w.height / 2})`}`}
+            display={!shown && !editing ? "none" : undefined}
+            opacity={!shown && editing ? 0.35 : undefined}
             onpointerdown={(e) => onWidgetPointerDown(e, w)}
+            onfocus={() => { selectedWidgetId = w.id; }}
             onkeydown={(e) => {
               if (e.key === "Enter" || e.key === " ") selectedWidgetId = w.id;
             }}
@@ -537,9 +542,9 @@
                 y="20"
                 text-anchor="end"
                 fill={tag.quality === "bad"
-                  ? "var(--warn, #e5a100)"
+                  ? "var(--bad)"
                   : tag.alarm_state && tag.alarm_state !== "NORMAL"
-                    ? "var(--danger, #ff5d5d)"
+                    ? "var(--critical)"
                     : "var(--muted)"}
                 font-size="10"
               >
@@ -570,7 +575,7 @@
                 height={Math.max(0, fillH - 2)}
                 rx="6"
                 fill={tag?.alarm_state && tag.alarm_state !== "NORMAL"
-                  ? "var(--danger, #ff5d5d)"
+                  ? "var(--critical)"
                   : "var(--accent, #3b82f6)"}
                 fill-opacity="0.75"
               />
@@ -605,7 +610,7 @@
                 height="16"
                 rx="8"
                 fill={tag?.alarm_state && tag.alarm_state !== "NORMAL"
-                  ? "var(--danger, #ff5d5d)"
+                  ? "var(--critical)"
                   : "var(--ok, #22c55e)"}
               />
               <text
@@ -618,7 +623,7 @@
               >
                 {tag ? `${formatValue(tag.value)} ${tag.unit_text}`.trim() : "--"}
               </text>
-            {:else if w.kind === "pump" || w.kind === "valve"}
+            {:else if w.kind === "pump" || w.kind === "valve" || w.kind === "motor"}
               {@const cx = w.width / 2}
               {@const cy = w.height / 2 + 2}
               {#if w.kind === "pump"}
@@ -635,6 +640,26 @@
                   points={`${cx - 8},${cy - 10} ${cx + 12},${cy} ${cx - 8},${cy + 10}`}
                   fill={active ? "var(--ok, #22c55e)" : "var(--muted)"}
                 />
+              {:else if w.kind === "motor"}
+                <circle
+                  cx={cx}
+                  cy={cy}
+                  r="22"
+                  fill={active ? "var(--ok, #22c55e)" : "var(--surface-2)"}
+                  fill-opacity={active ? "0.28" : "1"}
+                  stroke={active ? "var(--ok, #22c55e)" : "var(--muted)"}
+                  stroke-width="2"
+                />
+                <text
+                  x={cx}
+                  y={cy + 7}
+                  text-anchor="middle"
+                  fill={active ? "var(--ok, #22c55e)" : "var(--muted)"}
+                  font-size="20"
+                  font-weight="700"
+                >
+                  M
+                </text>
               {:else}
                 <polygon
                   points={`${cx - 22},${cy - 14} ${cx},${cy} ${cx - 22},${cy + 14} ${cx + 22},${cy - 14} ${cx},${cy} ${cx + 22},${cy + 14}`}
@@ -651,7 +676,7 @@
                 font-size="12"
                 font-weight="600"
               >
-                {active ? m.pumpOn : m.pumpOff}
+                {w.kind === "motor" ? (active ? m.motorOn : m.motorOff) : active ? m.pumpOn : m.pumpOff}
               </text>
             {:else if w.kind === "lamp"}
               {@const cx = w.width / 2}
@@ -732,6 +757,7 @@
               <option value="tank">{m.widgetKind.tank}</option>
               <option value="gauge">{m.widgetKind.gauge}</option>
               <option value="pump">{m.widgetKind.pump}</option>
+              <option value="motor">{m.widgetKind.motor}</option>
               <option value="valve">{m.widgetKind.valve}</option>
               <option value="lamp">{m.widgetKind.lamp}</option>
               <option value="value">{m.widgetKind.value}</option>
@@ -749,6 +775,33 @@
               </select>
             </label>
           {/if}
+          <label>
+            {m.visibilityTag}
+            <select bind:value={selectedWidget.visible_tag}>
+              <option value={null}>{m.notLinked}</option>
+              {#each store.tags as t (t.name)}
+                <option value={t.name}>{t.name} ({t.kind})</option>
+              {/each}
+            </select>
+          </label>
+          <label>
+            {m.rotateTag}
+            <select bind:value={selectedWidget.rotate_tag}>
+              <option value={null}>{m.notLinked}</option>
+              {#each store.tags as t (t.name)}
+                <option value={t.name}>{t.name} ({t.kind})</option>
+              {/each}
+            </select>
+          </label>
+          <label>
+            {m.moveTag}
+            <select bind:value={selectedWidget.move_tag}>
+              <option value={null}>{m.notLinked}</option>
+              {#each store.tags as t (t.name)}
+                <option value={t.name}>{t.name} ({t.kind})</option>
+              {/each}
+            </select>
+          </label>
           <div class="row-2">
             <label>
               {m.xCoord}
@@ -837,8 +890,8 @@
     font-weight: 600;
   }
   button.danger-btn {
-    border-color: var(--danger, #ff5d5d);
-    color: var(--danger, #ff5d5d);
+    border-color: var(--critical);
+    color: var(--critical);
   }
   .snap-toggle {
     display: inline-flex;
@@ -860,6 +913,11 @@
   }
   .graphic-workspace.with-inspector {
     grid-template-columns: minmax(0, 1fr) 260px;
+  }
+  @media (max-width: 700px) {
+    .graphic-workspace.with-inspector {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
   .canvas-wrap {
     padding: 10px 14px;

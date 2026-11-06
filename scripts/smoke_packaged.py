@@ -29,6 +29,33 @@ def free_port():
         return s.getsockname()[1]
 
 
+def check_offline_assets(web_dir):
+    """묶음 웹 자산이 외부 URL을 가져오지 않는지 확인한다(SQ-O06).
+
+    오류 문구 속 `https://` 같은 단순 문자열은 건드리지 않고, 실제로 가져오는
+    위치(src·href·@import·url()·fetch·WebSocket)만 검사한다.
+    """
+    import re
+    patterns = [
+        re.compile(r'''(?:src|href)\s*=\s*["']https?://''', re.IGNORECASE),
+        re.compile(r'''@import\s+["']https?://''', re.IGNORECASE),
+        re.compile(r'''url\(\s*["']?https?://''', re.IGNORECASE),
+        re.compile(r'''(?:fetch|import\s*\(|new\s+(?:URL|WebSocket)\()\s*["']https?://'''),
+        re.compile(r'''wss?://'''),
+    ]
+    bad = []
+    for path in sorted(web_dir.rglob("*")):
+        if not path.is_file() or path.suffix not in (".html", ".js", ".mjs", ".css"):
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for pattern in patterns:
+            if pattern.search(text):
+                bad.append(f"{path.relative_to(web_dir)}: {pattern.pattern[:24]}…")
+                break
+    if bad:
+        raise SystemExit("묶음 웹 자산이 외부 URL을 참조한다:\n" + "\n".join(bad))
+
+
 def main():
     dist = Path(sys.argv[1] if len(sys.argv) > 1 else "dist")
     archives = sorted(list(dist.glob("*.tar.gz")) + list(dist.glob("*.zip")))
@@ -47,6 +74,7 @@ def main():
         for need in ("README.txt", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.txt", "docs/user/01-시작하기.md", "web/index.html", "examples/demo.toml"):
             if not (root / need).is_file():
                 raise SystemExit(f"묶음에 {need}가 없다")
+        check_offline_assets(root / "web")
 
         # 설정과 데이터는 임시 폴더에 둔다(묶음 안의 예제는 건드리지 않는다).
         config = tmp / "project.toml"

@@ -886,4 +886,54 @@ mod history_tests {
         assert_eq!(history[0]["value"], serde_json::json!("가나다"));
         assert_eq!(history[0]["kind"], "string");
     }
+    #[test]
+    fn 시각은_utc_밀리초_그대로_돌아온다() {
+        // SQ-O05: 저장은 UTC 밀리초 정수, 표시는 해석 없이 그대로. 서머타임 경계에서도 변환하지 않는다.
+        let ops = Operations::open(
+            Path::new(":memory:"),
+            Arc::new(Project::from_toml("").unwrap()),
+            false,
+        )
+        .unwrap();
+        // 2026-03-29 01:30 UTC(유럽 서머타임 전환일).
+        let at = 1_774_747_800_000u64;
+        let mut s = snapshot("N", Some(TagValue::Number(1.0)));
+        s.changed_ms = at;
+        ops.save_tag_samples(&[s]).unwrap();
+        let history = ops.tag_history("N", None, None, 10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0]["time_ms"], serde_json::json!(at));
+    }
+    #[test]
+    fn 쓰기_거부에도_저장은_오류를_돌려주고_멈추지_않는다() {
+        // 디스크 가득·읽기 전용 마운트에서 쓰기가 거부돼도 패닉 없이 오류를 돌려준다.
+        use nuriscada_scheduler::AlarmRecord;
+        let ops = Operations::open(
+            Path::new(":memory:"),
+            Arc::new(Project::from_toml("").unwrap()),
+            false,
+        )
+        .unwrap();
+        ops.db
+            .lock()
+            .unwrap()
+            .execute_batch("PRAGMA query_only = ON")
+            .unwrap();
+        assert!(
+            ops.save_tag_samples(&[snapshot("N", Some(TagValue::Number(1.0)))])
+                .is_err()
+        );
+        assert!(
+            ops.save_alarms(&[AlarmRecord {
+                seq: 1,
+                time_ms: 1,
+                tag: "N".into(),
+                event: "HIHI",
+                value: 1.0,
+            }])
+            .is_err()
+        );
+        // 읽기(감사 조회)는 계속 된다.
+        assert!(ops.audit_page(0).is_ok());
+    }
 }

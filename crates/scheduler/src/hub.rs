@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use nuriscada_driver_api::{LinkState, LinkStatus};
+use nuriscada_driver_api::{LinkState, LinkStatus, hex_preview};
 use nuriscada_project::{Project, TagBody};
 use serde::Serialize;
 use tokio::sync::{broadcast, watch};
@@ -111,6 +111,12 @@ pub struct DeviceStatus {
     pub jitter_max_us: u64,
     /// 마지막 오류 설명.
     pub last_error: Option<String>,
+    /// 스캔 작업이 비정상 종료 후 재시작한 횟수.
+    pub restarts: u64,
+    /// 마지막 송신 프레임(16진수, 최대 512자).
+    pub last_tx_hex: Option<String>,
+    /// 마지막 수신 프레임(16진수, 최대 512자).
+    pub last_rx_hex: Option<String>,
 }
 
 /// 방송하는 프레임 하나. 이미 부호화되어 있어 모든 수신자가 같은 문자열을 공유한다.
@@ -229,6 +235,9 @@ impl Hub {
                 jitter_p99_us: None,
                 jitter_max_us: 0,
                 last_error: None,
+                restarts: 0,
+                last_tx_hex: None,
+                last_rx_hex: None,
             })
             .collect();
         let jitter = project.devices.iter().map(|_| JitterStats::new()).collect();
@@ -310,6 +319,9 @@ impl Hub {
                 jitter_p99_us: None,
                 jitter_max_us: 0,
                 last_error: None,
+                restarts: 0,
+                last_tx_hex: None,
+                last_rx_hex: None,
             })
             .collect();
         let jitter = project.devices.iter().map(|_| JitterStats::new()).collect();
@@ -475,6 +487,10 @@ impl Hub {
     pub fn devices(&self) -> Vec<DeviceStatus> {
         self.read().devices.clone()
     }
+    /// 진단 한 줄: 장치별 스캔 수·밀린 스캔·지터·재시작·마지막 오류. 서버가 주기적으로 기록한다.
+    pub fn diagnostic_line(&self) -> String {
+        diagnostic_line(&self.read().devices)
+    }
 
     /// 태그 상태를 갱신한다. 값·품질·알람 상태 중 바뀐 것이 있을 때만 변경으로 표시한다.
     /// 변경은 [`Hub::drain_changes`]가 묶어 방송한다.
@@ -538,6 +554,13 @@ impl Hub {
         d.jitter_p99_us = p99;
         d.jitter_max_us = max;
     }
+    /// 스캔 작업의 비정상 종료와 재시작을 기록한다. 호출자는 작업을 다시 시작해야 한다.
+    pub(crate) fn record_restart(&self, device: usize, reason: &str) {
+        let mut inner = self.write();
+        let d = &mut inner.devices[device];
+        d.restarts += 1;
+        d.last_error = Some(reason.to_string());
+    }
 
     /// 드라이버 상태와 마지막 오류를 반영한다.
     pub(crate) fn set_link(&self, device: usize, link: LinkStatus, last_error: Option<String>) {
@@ -550,5 +573,86 @@ impl Hub {
         if last_error.is_some() {
             d.last_error = last_error;
         }
+    }
+    /// 마지막 송수신 프레임을 16진수로 기록한다(각 최대 256바이트).
+    pub(crate) fn set_frames(&self, device: usize, frames: Option<(Vec<u8>, Vec<u8>)>) {
+        let Some((tx, rx)) = frames else {
+            return;
+        };
+        let mut inner = self.write();
+        let d = &mut inner.devices[device];
+        d.last_tx_hex = Some(hex_preview(&tx[..tx.len().min(256)]));
+        d.last_rx_hex = Some(hex_preview(&rx[..rx.len().min(256)]));
+    }
+}
+/// 장치 진단 한 줄(순수 함수라 시험할 수 있다).
+pub fn diagnostic_line(devices: &[DeviceStatus]) -> String {
+    devices
+        .iter()
+        .map(|d| {
+            format!(
+                "{} connected={} scans={} overruns={} restarts={} jitter_p99_us={} jitter_max_us={} rtt_ms={} ok={} failed={} error={} tx={} rx={}",
+                d.name,
+                d.connected,
+                d.scans,
+                d.overruns,
+                d.restarts,
+                d.jitter_p99_us.map_or_else(|| "-".into(), |v| v.to_string()),
+                d.jitter_max_us,
+                d.round_trip_ms.map_or_else(|| "-".into(), |v| format!("{v:.1}")),
+                d.requests_ok,
+                d.requests_failed,
+                d.last_error.as_deref().unwrap_or("-"),
+                short_hex(&d.last_tx_hex),
+                short_hex(&d.last_rx_hex),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+/// 진단 기록용 짧은 16진수(앞 64자, 없으면 `-`).
+fn short_hex(hex: &Option<String>) -> String {
+    hex.as_deref()
+        .map_or_else(|| "-".into(), |h| h.chars().take(64).collect())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn big_project(n: usize) -> Arc<Project> {
+        use std::fmt::Write as _;
+        let mut text = String::from(
+            "[[device]]\nname = \"d\"\ndriver = \"modbus-tcp\"\naddress = \"127.0.0.1:1\"\nscan_ms = 100\n",
+        );
+        for i in 0..n {
+            let _ = write!(
+                text,
+                "\n[[tag]]\nname = \"T{i}\"\ndevice = \"d\"\nspace = \"coil\"\naddress = {i}\ntype = \"digital\"\n"
+            );
+        }
+        Arc::new(Project::from_toml(&text).unwrap())
+    }
+
+    #[test]
+    fn 수천_태그_중_바뀐_것만_묶음에_담는다() {
+        let hub = Hub::new(&big_project(3000));
+        // 갱신 전에는 묶음이 없다.
+        assert!(hub.drain_changes().is_none());
+        hub.set_tag(1500, Some(TagValue::Bool(true)), Quality::Good, None);
+        let batch = hub.drain_changes().expect("바뀐 태그 묶음");
+        assert_eq!(batch.items.len(), 1);
+        assert_eq!(batch.items[0].0, 1500);
+        // 같은 값으로 다시 두면 묶음이 생기지 않는다.
+        hub.set_tag(1500, Some(TagValue::Bool(true)), Quality::Good, None);
+        assert!(hub.drain_changes().is_none());
+    }
+    #[test]
+    fn 진단_한_줄에_지터와_재시작이_든다() {
+        let hub = Hub::new(&big_project(2));
+        hub.record_restart(0, "시험 재시작");
+        let line = hub.diagnostic_line();
+        assert!(line.contains("d connected=false"), "{line}");
+        assert!(line.contains("restarts=1"), "{line}");
+        assert!(line.contains("jitter_p99_us="), "{line}");
     }
 }

@@ -331,6 +331,7 @@ fn build_tag(
                 value: None,
                 length: None,
                 swap_bytes: false,
+                interlock: Vec::new(),
             })
         }
         _ => {
@@ -375,6 +376,7 @@ fn build_tag(
                 value: None,
                 length: None,
                 swap_bytes: false,
+                interlock: Vec::new(),
             })
         }
     }

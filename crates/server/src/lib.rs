@@ -27,7 +27,7 @@ use nuriscada_driver_s7::S7Client;
 use nuriscada_driver_xgt_fenet::XgtFenetClient;
 use nuriscada_project::{DriverConfig, Project};
 use nuriscada_scheduler::wire::encode_snapshot;
-use nuriscada_scheduler::{Hub, PlanLimits, plan_with, run_device};
+use nuriscada_scheduler::{Hub, PlanLimits, plan_with, supervise_device};
 use serde_json::json;
 use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
@@ -35,6 +35,8 @@ use tokio::task::JoinHandle;
 mod control;
 /// 계정·세션·감사 기록 저장소.
 pub mod error_code;
+pub mod log;
+pub mod mqtt;
 pub mod operations;
 
 /// 설정이 고른 드라이버를 감싸는 열거형. `Driver` 트레이트가 동적 호출이 안 되므로 열거형으로 다룬다.
@@ -81,6 +83,15 @@ impl Driver for AnyDriver {
             Self::S7Tcp(d) => d.status(),
         }
     }
+    fn last_frames(&self) -> Option<(Vec<u8>, Vec<u8>)> {
+        match self {
+            Self::ModbusTcp(d) => d.last_frames(),
+            Self::MelsecMc(d) => d.last_frames(),
+            Self::XgtFenet(d) => d.last_frames(),
+            Self::FinsTcp(d) => d.last_frames(),
+            Self::S7Tcp(d) => d.last_frames(),
+        }
+    }
 }
 
 /// 실행 중인 스캐너들.
@@ -111,21 +122,23 @@ pub fn start_scanners(project: &Arc<Project>, hub: &Arc<Hub>) -> Scanners {
     let (shutdown, rx) = watch::channel(false);
     let mut tasks = vec![hub.spawn_publisher(project.server.publish, rx.clone())];
     for (index, device) in project.devices.iter().enumerate() {
-        let driver = match &device.driver {
+        let config = device.driver.clone();
+        let timeout = device.timeout;
+        let make_driver = move || match &config {
             DriverConfig::ModbusTcp { address } => {
-                AnyDriver::ModbusTcp(ModbusTcpClient::new(address.clone(), device.timeout))
+                AnyDriver::ModbusTcp(ModbusTcpClient::new(address.clone(), timeout))
             }
             DriverConfig::MelsecMc { address } => {
-                AnyDriver::MelsecMc(MelsecMcClient::new(address.clone(), device.timeout))
+                AnyDriver::MelsecMc(MelsecMcClient::new(address.clone(), timeout))
             }
             DriverConfig::XgtFenet { address } => {
-                AnyDriver::XgtFenet(XgtFenetClient::new(address.clone(), device.timeout))
+                AnyDriver::XgtFenet(XgtFenetClient::new(address.clone(), timeout))
             }
             DriverConfig::FinsTcp { address } => {
-                AnyDriver::FinsTcp(FinsTcpClient::new(address.clone(), device.timeout))
+                AnyDriver::FinsTcp(FinsTcpClient::new(address.clone(), timeout))
             }
             DriverConfig::S7Tcp { address } => {
-                AnyDriver::S7Tcp(S7Client::new(address.clone(), device.timeout))
+                AnyDriver::S7Tcp(S7Client::new(address.clone(), timeout))
             }
         };
         let device_blocks = blocks
@@ -133,14 +146,32 @@ pub fn start_scanners(project: &Arc<Project>, hub: &Arc<Hub>) -> Scanners {
             .filter(|b| b.device == index)
             .cloned()
             .collect();
-        tasks.push(tokio::spawn(run_device(
+        tasks.push(tokio::spawn(supervise_device(
             Arc::clone(hub),
             Arc::clone(project),
             index,
-            driver,
+            make_driver,
             device_blocks,
             rx.clone(),
         )));
+    }
+    {
+        let hub = Arc::clone(hub);
+        let mut shutdown = rx.clone();
+        tasks.push(tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => {
+                        crate::log::emit("info", "diagnostic", &hub.diagnostic_line());
+                    }
+                    _ = shutdown.changed() => {
+                        return;
+                    }
+                }
+            }
+        }));
     }
     Scanners { shutdown, tasks }
 }
@@ -264,6 +295,7 @@ fn build_router(
         .route("/api/v1/auth/logout", post(control::logout))
         .route("/api/v1/users", post(control::create_user))
         .route("/api/v1/audit", get(control::audit))
+        .route("/api/v1/diagnostics", get(control::diagnostics))
         .route("/api/v1/history/alarms", get(control::alarm_history))
         .route(
             "/api/v1/history/alarms/{id}/ack",
@@ -304,14 +336,12 @@ async fn security_headers(req: Request, next: Next) -> Response {
     let api = req.uri().path().starts_with("/api/");
     let mut res = next.run(req).await;
     let h = res.headers_mut();
-    h.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(
+    h.entry(header::CONTENT_SECURITY_POLICY)
+        .or_insert(HeaderValue::from_static(
             "default-src 'self'; connect-src 'self'; img-src 'self' data:; \
              style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; \
              form-action 'none'; frame-ancestors 'none'",
-        ),
-    );
+        ));
     h.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
@@ -383,19 +413,31 @@ async fn static_files(State(s): State<AppState>, uri: Uri) -> Response {
     let Some((real, bytes)) = found else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let is_svg = real.extension().and_then(|e| e.to_str()) == Some("svg");
     let cache = if real.components().any(|c| c.as_os_str() == "assets") {
         "public, max-age=31536000, immutable"
     } else {
         "no-cache"
     };
-    (
+    let mut res = (
         [
             (header::CONTENT_TYPE, content_type(&real)),
             (header::CACHE_CONTROL, cache),
         ],
         bytes,
     )
-        .into_response()
+        .into_response();
+    if is_svg {
+        // 신뢰할 수 없는 SVG가 정적 디렉터리에 섞여도 스크립트가 돌지 않는다(SQ-G10).
+        res.headers_mut().insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(
+                "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; \
+                 img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+            ),
+        );
+    }
+    res
 }
 
 async fn tags(State(s): State<AppState>) -> Json<serde_json::Value> {

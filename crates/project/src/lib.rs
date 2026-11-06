@@ -293,6 +293,37 @@ pub enum TagBody {
     },
 }
 
+/// 인터록 조건 값.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum InterlockValue {
+    /// 불리언(디지털 태그와 비교).
+    Bool(bool),
+    /// 정수(아날로그 태그와 비교).
+    Int(i64),
+    /// 문자열(문자열 태그와 정확히 일치 비교).
+    Text(String),
+}
+
+/// 편집 명세의 인터록 조건 하나.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InterlockSpec {
+    /// 조건 태그 이름.
+    pub tag: String,
+    /// 요구 값.
+    pub value: InterlockValue,
+}
+
+/// 검증된 인터록 조건 하나. `tag`는 태그 목록에서의 위치다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Interlock {
+    /// 조건 태그의 위치.
+    pub tag: usize,
+    /// 요구 값.
+    pub value: InterlockValue,
+}
+
 /// 태그.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tag {
@@ -310,6 +341,8 @@ pub struct Tag {
     pub address: u16,
     /// 태그 본문.
     pub body: TagBody,
+    /// 쓰기 허용 조건(AND). 빈 목록이면 조건 없음.
+    pub interlocks: Vec<Interlock>,
 }
 
 /// 검증을 마친 프로젝트.
@@ -437,6 +470,9 @@ pub struct TagSpec {
     /// 문자열 태그의 워드 바이트 순서 뒤집기(`string` 전용).
     #[serde(default)]
     pub swap_bytes: bool,
+    /// 쓰기 허용 조건 목록(AND). 비어 있으면 조건 없음.
+    #[serde(default)]
+    pub interlock: Vec<InterlockSpec>,
 }
 
 fn default_unit() -> u8 {
@@ -523,6 +559,15 @@ pub struct GraphicWidgetSpec {
     pub label: String,
     /// 연결할 태그 이름(선택).
     pub tag: Option<String>,
+    /// 가시성 조건 태그 이름(선택). 있으면 값이 참일 때만 보인다.
+    #[serde(default)]
+    pub visible_tag: Option<String>,
+    /// 회전 각도 태그 이름(선택). 숫자면 도 단위, 참이면 90도다.
+    #[serde(default)]
+    pub rotate_tag: Option<String>,
+    /// 이동 태그 이름(선택). 숫자면 x 오프셋(px, ±500으로 자른다), 참이면 +50이다.
+    #[serde(default)]
+    pub move_tag: Option<String>,
     /// X 좌표.
     pub x: f64,
     /// Y 좌표.
@@ -590,6 +635,25 @@ fn check_finite(label: &str, v: f64) -> Result<f64, ConfigError> {
     } else {
         invalid(format!("{label}: 유한한 숫자여야 한다"))
     }
+}
+/// 위젯의 태그 참조를 검증한다. 빈 문자열은 `None`으로 비우고 없는 태그는 거부한다.
+fn check_tag_ref(
+    wl: &str,
+    tag_names: &std::collections::HashSet<String>,
+    value: Option<String>,
+    label: &str,
+) -> Result<Option<String>, ConfigError> {
+    let Some(name) = value else {
+        return Ok(None);
+    };
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if !tag_names.contains(trimmed) {
+        return invalid(format!("{wl}: 없는 {label} `{trimmed}`"));
+    }
+    Ok(Some(trimmed.to_string()))
 }
 
 fn toml_str(s: &str) -> String {
@@ -676,6 +740,13 @@ impl Project {
 
         let mut tags = Vec::new();
         let mut tag_names = HashSet::new();
+        let all_names: Vec<String> = raw.tags.iter().map(|t| t.name.clone()).collect();
+        let mut kind_by_name = std::collections::HashMap::new();
+        for t in &raw.tags {
+            kind_by_name
+                .entry(t.name.clone())
+                .or_insert_with(|| t.kind.as_str().to_string());
+        }
         for t in raw.tags {
             if t.name.trim().is_empty() {
                 return invalid("태그 이름이 비어 있다");
@@ -878,6 +949,46 @@ impl Project {
                     ));
                 }
             };
+            if !t.interlock.is_empty() && !t.writable {
+                return invalid(format!(
+                    "태그 `{}`: 인터록은 쓰기 허용 태그에만 둔다",
+                    t.name
+                ));
+            }
+            let mut interlocks = Vec::new();
+            for cond in &t.interlock {
+                let Some(ref_idx) = all_names.iter().position(|n| n == &cond.tag) else {
+                    return invalid(format!(
+                        "태그 `{}`: 인터록 조건의 태그 `{}`가 없다",
+                        t.name, cond.tag
+                    ));
+                };
+                if ref_idx == tags.len() {
+                    return invalid(format!(
+                        "태그 `{}`: 자기 자신을 인터록 조건으로 둘 수 없다",
+                        t.name
+                    ));
+                }
+                let kind = kind_by_name
+                    .get(&cond.tag)
+                    .map_or("digital", String::as_str);
+                let kind_ok = matches!(
+                    (&cond.value, kind),
+                    (InterlockValue::Bool(_), "digital")
+                        | (InterlockValue::Int(_), "analog")
+                        | (InterlockValue::Text(_), "string")
+                );
+                if !kind_ok {
+                    return invalid(format!(
+                        "태그 `{}`: 조건 태그 `{}`와 값 종류가 맞지 않다",
+                        t.name, cond.tag
+                    ));
+                }
+                interlocks.push(Interlock {
+                    tag: ref_idx,
+                    value: cond.value.clone(),
+                });
+            }
             tags.push(Tag {
                 writable: t.writable,
                 name: t.name,
@@ -886,6 +997,7 @@ impl Project {
                 space,
                 address: t.address,
                 body,
+                interlocks,
             });
         }
 
@@ -914,7 +1026,7 @@ impl Project {
                 }
                 if !matches!(
                     w.kind.as_str(),
-                    "value" | "gauge" | "tank" | "lamp" | "pump" | "valve" | "label"
+                    "value" | "gauge" | "tank" | "lamp" | "pump" | "valve" | "motor" | "label"
                 ) {
                     return invalid(format!(
                         "화면 `{}` 위젯 `{}`: 지원하지 않는 kind `{}`",
@@ -934,16 +1046,11 @@ impl Project {
                 if matches!(w.kind.as_str(), "gauge" | "tank") && w.max <= w.min {
                     return invalid(format!("{wl}: max는 min보다 커야 한다"));
                 }
-                if let Some(tag_name) = &w.tag {
-                    let trimmed = tag_name.trim();
-                    if trimmed.is_empty() {
-                        w.tag = None;
-                    } else if !tag_names.contains(trimmed) {
-                        return invalid(format!("{wl}: 없는 태그 `{trimmed}`"));
-                    } else {
-                        w.tag = Some(trimmed.to_string());
-                    }
-                }
+                w.tag = check_tag_ref(&wl, &tag_names, w.tag.take(), "태그")?;
+                w.visible_tag =
+                    check_tag_ref(&wl, &tag_names, w.visible_tag.take(), "가시성 태그")?;
+                w.rotate_tag = check_tag_ref(&wl, &tag_names, w.rotate_tag.take(), "회전 태그")?;
+                w.move_tag = check_tag_ref(&wl, &tag_names, w.move_tag.take(), "이동 태그")?;
             }
             screens.push(s);
         }
@@ -1070,6 +1177,14 @@ impl Project {
                         value,
                         length,
                         swap_bytes,
+                        interlock: t
+                            .interlocks
+                            .iter()
+                            .map(|r| InterlockSpec {
+                                tag: self.tags[r.tag].name.clone(),
+                                value: r.value.clone(),
+                            })
+                            .collect(),
                     }
                 })
                 .collect(),
@@ -1154,6 +1269,21 @@ impl Project {
                 }
                 out.push_str(&format!("alarm = {{ {} }}\n", fields.join(", ")));
             }
+            for r in &t.interlock {
+                out.push_str("\n[[tag.interlock]]\n");
+                out.push_str(&format!("tag = {}\n", toml_str(&r.tag)));
+                match &r.value {
+                    InterlockValue::Bool(b) => {
+                        out.push_str(&format!("value = {b}\n"));
+                    }
+                    InterlockValue::Int(n) => {
+                        out.push_str(&format!("value = {n}\n"));
+                    }
+                    InterlockValue::Text(s) => {
+                        out.push_str(&format!("value = {}\n", toml_str(s)));
+                    }
+                }
+            }
         }
         for s in &spec.screens {
             out.push_str("\n[[screen]]\n");
@@ -1169,6 +1299,15 @@ impl Project {
                 }
                 if let Some(tag) = &w.tag {
                     out.push_str(&format!("tag = {}\n", toml_str(tag)));
+                }
+                if let Some(tag) = &w.visible_tag {
+                    out.push_str(&format!("visible_tag = {}\n", toml_str(tag)));
+                }
+                if let Some(tag) = &w.rotate_tag {
+                    out.push_str(&format!("rotate_tag = {}\n", toml_str(tag)));
+                }
+                if let Some(tag) = &w.move_tag {
+                    out.push_str(&format!("move_tag = {}\n", toml_str(tag)));
                 }
                 out.push_str(&format!("x = {}\n", toml_f64(w.x)));
                 out.push_str(&format!("y = {}\n", toml_f64(w.y)));

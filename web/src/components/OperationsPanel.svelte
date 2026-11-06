@@ -3,8 +3,20 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { AlarmRecord, DeviceSpec, ImportReport, ProjectSpec, TagHistorySample, TagSpec } from "../lib/types";
-  import { formatDateTime, formatImportCsv, formatTime } from "../lib/format";
+  import { UndoStack } from "../lib/undo-stack";
+  import { formatDateTime, formatImportCsv, formatTime, formatValue } from "../lib/format";
+  import type { Store } from "../lib/store.svelte";
+  import { validateProjectSpec, type ProjectIssue } from "../lib/validate";
   import { eventLabel, m } from "../lib/i18n.svelte";
+  function issueText(issue: ProjectIssue): string {
+    switch (issue.code) {
+      case "empty-tag-name": return m.issueEmptyTag(issue.tag);
+      case "dup-tag-name": return m.issueDupTag(issue.tag);
+      case "unknown-device": return m.issueUnknownDevice(issue.tag, issue.device);
+      case "dup-widget-id": return m.issueDupWidget(issue.screen, issue.id);
+      case "dup-screen-name": return m.issueDupScreen(issue.screen);
+    }
+  }
   import { apiErrorMessage } from "../lib/api";
   export interface SessionDoc {
     authentication_required: boolean;
@@ -13,9 +25,31 @@
     local_management?: boolean;
     user: { username: string; role: "admin" | "operator" | "viewer"; expires_ms: number } | null;
   }
-  let { onSession }: { onSession: (session: SessionDoc) => void } = $props();
+  let { onSession, store }: { onSession: (session: SessionDoc) => void; store: Store } = $props();
   let session = $state<SessionDoc | null>(null);
   let username = $state("");
+  let selectedTags = $state<number[]>([]);
+  let batchDevice = $state("");
+  let batchUnit = $state(1);
+  let batchWritable = $state<"keep" | "on" | "off">("keep");
+  function toggleTagSelect(index: number): void {
+    selectedTags = selectedTags.includes(index)
+      ? selectedTags.filter((i) => i !== index)
+      : [...selectedTags, index];
+  }
+  function applyBatch(): void {
+    if (!projectSpec || selectedTags.length === 0) return;
+    commitProject();
+    for (const i of selectedTags) {
+      const t = projectSpec.tag[i];
+      if (!t) continue;
+      if (batchDevice !== "") t.device = batchDevice;
+      if (Number.isInteger(batchUnit) && batchUnit >= 0 && batchUnit <= 255) t.unit = batchUnit;
+      if (batchWritable !== "keep") t.writable = batchWritable === "on";
+    }
+    projectSpec.tag = [...projectSpec.tag];
+    selectedTags = [];
+  }
   let password = $state("");
   let message = $state("");
   let busy = $state(false);
@@ -26,6 +60,60 @@
   let batchRows = $state<{ name: string; raw: string }[]>([]);
   let batchResults = $state<{ name: string; outcome: string }[] | null>(null);
   let pendingBatch = $state<{ name: string; value: number | boolean }[] | null>(null);
+  let tagFilterText = $state("");
+  const DRAFT_KEY = "nuriscada.project-draft";
+  let draftNotice = $state(false);
+  function readDraft(): ProjectSpec | null {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw) as { spec?: ProjectSpec };
+      return data.spec ?? null;
+    } catch {
+      return null;
+    }
+  }
+  function clearDraft(): void {
+    try {
+      localStorage.removeItem(DRAFT_KEY);
+    } catch {
+      // 저장소를 쓸 수 없으면 무시한다.
+    }
+    draftNotice = false;
+  }
+  const projectHistory = new UndoStack<ProjectSpec>(50);
+  let projectUndoDepth = $state(0);
+  let projectRedoDepth = $state(0);
+  function syncProjectHistory(): void {
+    projectUndoDepth = projectHistory.undoDepth;
+    projectRedoDepth = projectHistory.redoDepth;
+  }
+  function snapshotProject(): ProjectSpec | null {
+    return projectSpec === null ? null : $state.snapshot(projectSpec);
+  }
+  function commitProject(): void {
+    const snap = snapshotProject();
+    if (snap) projectHistory.commit(snap);
+    syncProjectHistory();
+  }
+  function undoProject(): void {
+    const current = snapshotProject();
+    if (!current) return;
+    const prev = projectHistory.undo(current);
+    if (!prev) return;
+    projectSpec = prev;
+    selectedTags = [];
+    syncProjectHistory();
+  }
+  function redoProject(): void {
+    const current = snapshotProject();
+    if (!current) return;
+    const next = projectHistory.redo(current);
+    if (!next) return;
+    projectSpec = next;
+    selectedTags = [];
+    syncProjectHistory();
+  }
   let events = $state<{ seq: number; event: { time_ms: number; actor: string; source: string; action: string; target: string; detail: unknown } }[]>([]);
   let newName = $state("");
   let newPassword = $state("");
@@ -82,12 +170,18 @@
 
   async function loadProject() {
     const res = await request("project") as { project: ProjectSpec; toml: string };
+    for (const t of res.project.tag) t.interlock ??= [];
     projectSpec = res.project;
     projectToml = res.toml;
+    projectHistory.clear();
+    selectedTags = [];
+    syncProjectHistory();
+    const draft = readDraft();
+    draftNotice = draft !== null && JSON.stringify(draft) !== JSON.stringify(res.project);
   }
-
   function addDevice() {
     if (!projectSpec) return;
+    commitProject();
     const idx = projectSpec.device.length + 1;
     const dev: DeviceSpec = { name: `dev${idx}`, driver: "modbus-tcp", address: "127.0.0.1:5020", timeout_ms: 500, scan_ms: 100 };
     projectSpec.device = [...projectSpec.device, dev];
@@ -95,12 +189,14 @@
 
   function removeDevice(index: number) {
     if (!projectSpec) return;
+    commitProject();
     projectSpec.device = projectSpec.device.filter((_, i) => i !== index);
   }
 
   function addTag() {
     if (!projectSpec) return;
     const idx = projectSpec.tag.length + 1;
+    commitProject();
     const defaultDev = projectSpec.device[0]?.name ?? "sim";
     const tag: TagSpec = {
       name: `TAG_${idx}`,
@@ -114,6 +210,7 @@
       value: null,
       length: null,
       swap_bytes: false,
+      interlock: [],
       scale: { plc_base: 0, plc_full: 100, base: 0, full: 100, profile: 0, delay: 0, range: 0 },
       alarm: null,
     };
@@ -122,7 +219,9 @@
 
   function removeTag(index: number) {
     if (!projectSpec) return;
+    commitProject();
     projectSpec.tag = projectSpec.tag.filter((_, i) => i !== index);
+    selectedTags = [];
   }
 
   function onTagTypeChange(tag: TagSpec) {
@@ -160,12 +259,37 @@
 
   async function saveProject() {
     if (!projectSpec) return;
+    const problems = validateProjectSpec(projectSpec);
+    if (problems.length > 0) {
+      message = problems.map(issueText).join(" / ");
+      return;
+    }
     const res = await request("project", projectSpec) as { project: ProjectSpec; toml: string };
     projectSpec = res.project;
     projectToml = res.toml;
+    clearDraft();
     await refresh();
-    message = m.projectSaved;
   }
+  function restoreDraft(): void {
+    const draft = readDraft();
+    if (!draft || !projectSpec) return;
+    commitProject();
+    projectSpec = draft;
+    selectedTags = [];
+    draftNotice = false;
+  }
+  $effect(() => {
+    const snap = projectSpec === null ? null : $state.snapshot(projectSpec);
+    if (snap === null) return;
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ spec: snap }));
+      } catch {
+        // 저장소를 쓸 수 없으면 무시한다.
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  });
 
   async function runImport() {
     const body: Record<string, unknown> = {
@@ -354,8 +478,17 @@
             <button type="button" disabled={busy} onclick={addDevice}>{m.addDevice}</button>
             <button type="button" disabled={busy} onclick={addTag}>{m.addTag}</button>
             <button type="button" disabled={busy} onclick={() => void perform(saveProject)}>{m.saveApply}</button>
+            <button type="button" disabled={busy || projectUndoDepth === 0} onclick={undoProject} title="Ctrl+Z">{m.undoEdit}</button>
+            <button type="button" disabled={busy || projectRedoDepth === 0} onclick={redoProject} title="Ctrl+Shift+Z">{m.redoEdit}</button>
           {/if}
         </div>
+        {#if draftNotice && projectSpec}
+          <div class="inline">
+            <span>{m.draftFound}</span>
+            <button type="button" disabled={busy} onclick={restoreDraft}>{m.draftRestore}</button>
+            <button type="button" disabled={busy} onclick={clearDraft}>{m.draftDiscard}</button>
+          </div>
+        {/if}
         {#if projectSpec}
           <div class="editor-block">
             <div class="inline">
@@ -374,9 +507,41 @@
               </div>
             {/each}
             <h4>{m.tagsHeading(projectSpec.tag.length)}</h4>
+            <div class="inline">
+              <label>{m.tagFilter} <input bind:value={tagFilterText} maxlength="64" placeholder={m.tagFilterPlaceholder} /></label>
+            </div>
+            {#if selectedTags.length > 0}
+              <div class="inline">
+                <span>{m.selectedCount(selectedTags.length)}</span>
+                <label>{m.colDevice}
+                  <select bind:value={batchDevice}>
+                    <option value="">{m.batchKeep}</option>
+                    {#each projectSpec?.device ?? [] as d (d.name)}
+                      <option value={d.name}>{d.name}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label>{m.unitNo} <input type="number" min="0" max="255" bind:value={batchUnit} /></label>
+                <label>{m.allowWrite}
+                  <select bind:value={batchWritable}>
+                    <option value="keep">{m.batchKeep}</option>
+                    <option value="on">{m.batchOn}</option>
+                    <option value="off">{m.batchOff}</option>
+                  </select>
+                </label>
+                <button type="button" disabled={busy} onclick={applyBatch}>{m.batchApply}</button>
+                <button type="button" disabled={busy} onclick={() => { selectedTags = []; }}>{m.clearSelection}</button>
+              </div>
+            {:else}
+              <div class="inline">
+                <button type="button" disabled={busy} onclick={() => { selectedTags = (projectSpec?.tag ?? []).map((_, i) => i); }}>{m.selectAll}</button>
+              </div>
+            {/if}
             {#each projectSpec.tag as tag, ti (ti)}
+              {#if tagFilterText.trim() === "" || tag.name.toLowerCase().includes(tagFilterText.trim().toLowerCase()) || tag.device.toLowerCase().includes(tagFilterText.trim().toLowerCase())}
               <div class="editor-row">
                 <div class="inline">
+                  <label><input type="checkbox" checked={selectedTags.includes(ti)} onchange={() => toggleTagSelect(ti)} title={tag.name} /> {tag.name}</label>
                   <label>{m.tagName} <input bind:value={tag.name} required /></label>
                   <label>{m.colDevice} <input bind:value={tag.device} required /></label>
                   <label>{m.unitNo} <input type="number" min="0" max="255" bind:value={tag.unit} required /></label>
@@ -460,7 +625,36 @@
                     {/if}
                   </div>
                 {/if}
+                {#if tag.writable}
+                  <div class="inline sub-row">
+                    <span>{m.interlockConds}</span>
+                    {#each tag.interlock as cond, ci (ci)}
+                      <select bind:value={cond.tag}>
+                        {#each (projectSpec?.tag ?? []).filter((t2) => t2.name !== tag.name) as cand (cand.name)}
+                          <option value={cand.name}>{cand.name}</option>
+                        {/each}
+                      </select>
+                      <select value={typeof cond.value === "boolean" ? "bool" : typeof cond.value === "string" ? "str" : "num"} onchange={(e) => { const k = (e.currentTarget as HTMLSelectElement).value; cond.value = k === "bool" ? false : k === "str" ? "" : 0; tag.interlock = [...tag.interlock]; }}>
+                        <option value="bool">{m.condBool}</option>
+                        <option value="num">{m.condNum}</option>
+                        <option value="str">{m.condStr}</option>
+                      </select>
+                      {#if typeof cond.value === "boolean"}
+                        <input type="checkbox" bind:checked={cond.value} />
+                      {:else if typeof cond.value === "string"}
+                        <input bind:value={cond.value} maxlength="64" />
+                      {:else}
+                        <input type="number" step="1" value={cond.value} onchange={(e) => { cond.value = Number((e.currentTarget as HTMLInputElement).value); tag.interlock = [...tag.interlock]; }} />
+                      {/if}
+                      {@const live = store.tags.find((t) => t.name === cond.tag)}
+                      <span class="muted" title={live?.quality === "bad" ? m.badQuality : ""}>→ {live ? formatValue(live.value) : "—"} {live && live.quality === "good" && ((typeof cond.value === "boolean" && typeof live.value === "boolean" && cond.value === live.value) || (typeof cond.value === "number" && typeof live.value === "number" && cond.value === live.value) || (typeof cond.value === "string" && typeof live.value === "string" && cond.value === live.value)) ? "✓" : "✗"}</span>
+                      <button type="button" disabled={busy} onclick={() => { tag.interlock = tag.interlock.filter((_, j) => j !== ci); }}>{m.removeCond}</button>
+                    {/each}
+                    <button type="button" disabled={busy} onclick={() => { const first = (projectSpec?.tag ?? []).find((t2) => t2.name !== tag.name); if (first) tag.interlock = [...tag.interlock, { tag: first.name, value: false }]; }}>{m.addRow}</button>
+                  </div>
+                {/if}
               </div>
+              {/if}
             {/each}
             {#if projectToml}
               <details>

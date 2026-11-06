@@ -38,6 +38,9 @@ export interface DeviceStatus {
   jitter_p99_us: number | null;
   jitter_max_us: number;
   last_error: string | null;
+  restarts: number;
+  last_tx_hex: string | null;
+  last_rx_hex: string | null;
 }
 
 export interface StatusDoc {
@@ -128,15 +131,19 @@ export interface TagSpec {
   value: string | null;
   length: number | null;
   swap_bytes: boolean;
+  interlock: { tag: string; value: boolean | number | string }[];
 }
 
-export type GraphicWidgetKind = "value" | "gauge" | "tank" | "lamp" | "pump" | "valve" | "label";
+export type GraphicWidgetKind = "value" | "gauge" | "tank" | "lamp" | "pump" | "valve" | "motor" | "label";
 
 export interface GraphicWidgetSpec {
   id: string;
   kind: GraphicWidgetKind;
   label: string;
   tag: string | null;
+  visible_tag: string | null;
+  rotate_tag: string | null;
+  move_tag: string | null;
   x: number;
   y: number;
   width: number;

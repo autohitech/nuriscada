@@ -18,11 +18,16 @@
   const worstJitter = $derived(
     store.devices.reduce<number | null>((m, d) => (d.jitter_p99_us === null ? m : Math.max(m ?? 0, d.jitter_p99_us)), null),
   );
-  const details = $derived(
-    store.devices
-      .map((d) => `${d.name}: ${d.connected ? m.connected : m.badQuality}, ${m.scans} ${d.scans}, ${m.jitter} ${formatMicros(d.jitter_p99_us)}`)
-      .join("\n"),
-  );
+  const diagTitle = (d: (typeof store.devices)[number]) =>
+    [
+      d.last_error ?? "",
+      `${m.rtt} ${d.round_trip_ms === null ? "—" : d.round_trip_ms.toFixed(1) + "ms"} · ${m.commOk} ${d.requests_ok} · ${m.commFail} ${d.requests_failed}`,
+      d.last_tx_hex ? `${m.framesTx}: ${d.last_tx_hex.slice(0, 96)}` : "",
+      d.last_rx_hex ? `${m.framesRx}: ${d.last_rx_hex.slice(0, 96)}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  const details = $derived(store.devices.map(diagTitle).join("\n"));
 
   const themeLabel = $derived(
     theme === "light" ? m.themeLight : theme === "contrast" ? m.themeContrast : m.themeDark,
@@ -58,10 +63,11 @@
   {:else}
   <ul class="devices" aria-label={m.devices}>
     {#each store.devices as d (d.name)}
-      <li title={d.last_error ?? ""}>
+      <li title={diagTitle(d)}>
         <span class="dev">{d.name}</span>
         <StateChip severity={d.connected ? "normal" : "bad"} label={d.connected ? m.connected : m.badQuality} />
         <span class="muted">{m.scans} {d.scans}</span>
+        {#if d.restarts > 0}<span class="muted">{m.restarts} {d.restarts}</span>{/if}
         <span class="muted">{m.jitter} {formatMicros(d.jitter_p99_us)}</span>
       </li>
     {/each}

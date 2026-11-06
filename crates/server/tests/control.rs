@@ -1521,3 +1521,240 @@ scale={{plc_base=0,plc_full=100,base=0,full=1000}}
     assert_eq!(sim.state().holding_registers[11], 22);
     // 묶음 횟수 대신 값으로 확인한다. 묶음 계획 자체는 plan_batch_steps 단위 시험이 보장한다.
 }
+
+#[tokio::test]
+async fn interlock_조건이_안_맞으면_쓰기를_막고_맞으면_보낸다() {
+    let sim = Simulator::start("127.0.0.1:0", 200).await.unwrap();
+    let project = Arc::new(
+        Project::from_toml(&format!(
+            r#"
+[[device]]
+name="sim"
+driver="modbus-tcp"
+address="{}"
+scan_ms=20
+[[tag]]
+name="READY"
+device="sim"
+space="coil"
+address=0
+type="digital"
+writable=true
+[[tag]]
+name="MOTOR"
+device="sim"
+space="coil"
+address=1
+type="digital"
+writable=true
+[[tag.interlock]]
+tag="READY"
+value=true
+"#,
+            sim.addr()
+        ))
+        .unwrap(),
+    );
+    let ops = Operations::open_with_mode(
+        std::path::Path::new(":memory:"),
+        project.clone(),
+        true,
+        false,
+    )
+    .unwrap();
+    ops.create_user("operator", PASSWORD, Role::Operator, false, "cli", "cli")
+        .unwrap();
+    let hub = Hub::new(&project);
+    let archive = ops.start_archive(hub.clone());
+    let scanners = start_scanners(&project, &hub);
+    ops.attach_scanners(scanners).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router_with_operations(hub, addr, None, ops.clone());
+    let _task = tokio::spawn(async move {
+        let _archive = archive;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let cookie = login_at(addr, false, "operator").await;
+    for _ in 0..50 {
+        let (_, _, tags) = request(addr, "GET", "/api/v1/tags", &cookie, json!({}), "").await;
+        let good = tags["tags"]
+            .as_array()
+            .map(|ts| {
+                ts.iter()
+                    .all(|t| t.get("quality").and_then(|q| q.as_str()) == Some("good"))
+            })
+            .unwrap_or(false);
+        if good {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let hdr = "X-NuriScada-Request: 1\r\n";
+    // READY=false이므로 MOTOR 쓰기는 403 write.interlocked.
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/MOTOR",
+        &cookie,
+        json!({"value": true}),
+        hdr,
+    )
+    .await;
+    assert_eq!(code, 403, "{body}");
+    assert_eq!(body["code"], "write.interlocked");
+    assert!(!sim.state().coils[1]);
+    // 묶음 쓰기에서도 항목별 결과는 interlocked.
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/batch",
+        &cookie,
+        json!({"writes": [{"name": "MOTOR", "value": true}]}),
+        hdr,
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["results"][0]["outcome"], "interlocked");
+    assert!(!sim.state().coils[1]);
+    // 조건을 만족시키면 쓰기가 닿는다.
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/READY",
+        &cookie,
+        json!({"value": true}),
+        hdr,
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/MOTOR",
+        &cookie,
+        json!({"value": true}),
+        hdr,
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    assert!(sim.state().coils[1]);
+}
+
+#[tokio::test]
+async fn svg_정적_파일은_스크립트를_막는_csp를_단다() {
+    let dir = std::env::temp_dir().join(format!("nuriscada-svg-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("evil.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>"#,
+    )
+    .unwrap();
+    let project = Arc::new(
+        Project::from_toml(
+            r#"
+[[device]]
+name="sim"
+driver="modbus-tcp"
+address="127.0.0.1:1"
+scan_ms=1000
+"#,
+        )
+        .unwrap(),
+    );
+    let ops = Operations::open_with_mode(
+        std::path::Path::new(":memory:"),
+        project.clone(),
+        false,
+        false,
+    )
+    .unwrap();
+    let hub = Hub::new(&project);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router_with_operations(hub, addr, Some(dir.clone()), ops);
+    let _task = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (code, headers, _) = request(addr, "GET", "/evil.svg", "", json!({}), "").await;
+    assert_eq!(code, 200, "{headers}");
+    let lower = headers.to_lowercase();
+    assert!(lower.contains("image/svg+xml"), "{headers}");
+    let csp = lower
+        .lines()
+        .find(|l| l.starts_with("content-security-policy:"))
+        .unwrap_or("");
+    assert!(csp.contains("script-src 'none'"), "{headers}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn 진단_번들은_로컬_관리자만_받는다() {
+    let st = start(true, false).await;
+    let operator = login(&st, "operator").await;
+    let (code, _, _) = request(
+        st.addr,
+        "GET",
+        "/api/v1/diagnostics",
+        &operator,
+        json!({}),
+        "",
+    )
+    .await;
+    assert_eq!(code, 403);
+    let admin = login(&st, "admin").await;
+    let (code, _, body) =
+        request(st.addr, "GET", "/api/v1/diagnostics", &admin, json!({}), "").await;
+    assert_eq!(code, 200, "{body}");
+    assert!(body["version"].is_string(), "{body}");
+    assert!(body["uptime_s"].is_number(), "{body}");
+    assert!(body["devices"].is_array(), "{body}");
+    assert!(
+        body["alarm_archive"].is_object() || body["alarm_archive"].is_null(),
+        "{body}"
+    );
+    assert!(
+        body["project_toml"]
+            .as_str()
+            .is_some_and(|t| t.contains("[[device]]")),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn 실수가_섞인_쓰기는_반올림하지_않고_거부한다() {
+    // 설계 0007 §6: 쓰기는 원시 정수만 보내고 float 전달·반올림을 하지 않는다.
+    let st = start(true, false).await;
+    let cookie = login(&st, "operator").await;
+    let hdr = "X-NuriScada-Request: 1\r\n";
+    for body in [
+        json!({"value": 1.5}),
+        json!({"value": 70000}),
+        json!({"value": -1}),
+    ] {
+        let (code, _, resp) = request(
+            st.addr,
+            "POST",
+            "/api/v1/control/tags/LEVEL",
+            &cookie,
+            body,
+            hdr,
+        )
+        .await;
+        assert_eq!(code, 400, "{resp}");
+        assert_eq!(resp["code"], "write.bad_value");
+    }
+}

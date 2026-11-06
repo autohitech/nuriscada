@@ -39,6 +39,9 @@ pub struct XgtFenetClient {
     stream: Option<TcpStream>,
     invoke: u16,
     status: LinkStatus,
+    // 마지막 송수신 프레임(최대 256바이트씩). 교신 전에는 비어 있다.
+    last_tx: Vec<u8>,
+    last_rx: Vec<u8>,
 }
 
 impl XgtFenetClient {
@@ -50,6 +53,8 @@ impl XgtFenetClient {
             stream: None,
             invoke: 0,
             status: LinkStatus::initial(),
+            last_tx: Vec::new(),
+            last_rx: Vec::new(),
         }
     }
 
@@ -62,7 +67,7 @@ impl XgtFenetClient {
         stream: &mut TcpStream,
         request: &[u8],
         req: &ReadRequest,
-    ) -> Result<BlockData, DriverError> {
+    ) -> Result<(BlockData, Vec<u8>), DriverError> {
         stream
             .write_all(request)
             .await
@@ -79,7 +84,8 @@ impl XgtFenetClient {
             .read_exact(&mut frame[HEADER_LEN..])
             .await
             .map_err(|e| DriverError::Connection(e.to_string()))?;
-        decode_read_response(req, &frame)
+        let data = decode_read_response(req, &frame)?;
+        Ok((data, frame))
     }
 
     async fn exchange_write(stream: &mut TcpStream, request: &[u8]) -> Result<(), DriverError> {
@@ -214,6 +220,8 @@ impl Driver for XgtFenetClient {
             vars,
         };
         let frame = encode_read_request(&req)?;
+        // 송신 프레임은 최대 256바이트까지 미리 잘라 둔다.
+        let tx = frame[..frame.len().min(256)].to_vec();
 
         let started = Instant::now();
         let result = async {
@@ -226,9 +234,12 @@ impl Driver for XgtFenetClient {
         .await;
 
         match &result {
-            Ok(_) => {
+            Ok((_, rx)) => {
                 self.status.requests_ok += 1;
                 self.status.last_round_trip = Some(started.elapsed());
+                // 교신에 성공했을 때 마지막 송수신 프레임을 갱신한다.
+                self.last_tx = tx;
+                self.last_rx = rx[..rx.len().min(256)].to_vec();
             }
             Err(e) => {
                 self.status.requests_failed += 1;
@@ -241,10 +252,19 @@ impl Driver for XgtFenetClient {
                 }
             }
         }
-        result
+        result.map(|(data, _)| data)
     }
 
     fn status(&self) -> LinkStatus {
         self.status
+    }
+
+    /// 마지막 송수신 프레임(최대 256바이트씩). 교신 전이면 `None`이다.
+    fn last_frames(&self) -> Option<(Vec<u8>, Vec<u8>)> {
+        if self.last_tx.is_empty() && self.last_rx.is_empty() {
+            None
+        } else {
+            Some((self.last_tx.clone(), self.last_rx.clone()))
+        }
     }
 }

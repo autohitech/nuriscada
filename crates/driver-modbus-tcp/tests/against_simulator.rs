@@ -226,3 +226,18 @@ async fn writes_multiple_coils_and_registers() {
         Err(DriverError::InvalidRequest(_))
     ));
 }
+
+#[tokio::test]
+async fn successful_read_keeps_last_frames_for_diagnosis() {
+    let (_sim, mut client) = setup().await;
+    assert!(client.last_frames().is_none());
+    let data = client
+        .read(&block(SPACE_HOLDING_REGISTERS, 0, 2, DataKind::Word))
+        .await
+        .unwrap();
+    assert!(matches!(data, BlockData::Words(_)));
+    let (tx, rx) = client.last_frames().expect("교신 뒤 프레임이 남는다");
+    // MODBUS TCP 요청: MBAP(7) + 기능 3 + 시작 주소 + 수량.
+    assert!(tx.len() >= 7 && tx[7] == 3, "tx={tx:02x?}");
+    assert!(!rx.is_empty(), "응답 프레임이 남는다");
+}

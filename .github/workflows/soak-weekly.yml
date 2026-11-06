@@ -1,0 +1,38 @@
+name: soak-weekly
+
+# 매주 토요일 새벽에 장기 부하를 5시간 돌린다(결정 0005의 72시간 목표를 향한 굴러가는 증거).
+# 전체 72시간은 스테이징 장비에서 docs/release.md 72시간 절차대로 따로 돌린다.
+on:
+  schedule:
+    - cron: "0 18 * * 5" # 토요일 03:00 KST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: soak-weekly
+  cancel-in-progress: false
+
+jobs:
+  soak:
+    name: 장기 부하 (ubuntu-latest, 5시간)
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - name: 측정 도구 빌드
+        run: cargo build --locked --release -p nuriscada-bench
+      - name: 5시간 soak와 자원 증가 단언
+        run: python3 scripts/soak.py --duration-s 18000 --sample-s 60 --output soak-weekly
+      - name: 기록 보관
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-weekly
+          path: |
+            soak-weekly/status.json
+            soak-weekly/samples.jsonl
+            soak-weekly/stdout.json
+            soak-weekly/stderr.log
+          if-no-files-found: warn

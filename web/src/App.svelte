@@ -17,6 +17,19 @@
   const store = new Store();
   let session = $state<SessionDoc | null>(null);
   let viewMode = $state<"split" | "graphic" | "table">("split");
+  let kiosk = $state(false);
+  function toggleKiosk(): void {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+    } else {
+      void document.documentElement.requestFullscreen().catch(() => {});
+    }
+  }
+  $effect(() => {
+    const sync = () => { kiosk = document.fullscreenElement !== null; };
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  });
   const canRead = $derived(!!session && (!session.authentication_required || !!session.user));
   const canEditGraphic = $derived(
     !!session && !!session.local_management && session.user?.role === "admin"
@@ -60,14 +73,16 @@
 </script>
 
 <div class="app">
+  <a class="skip-link" href="#main-content">{m.skipToContent}</a>
   {#if canRead}<StatusBar {store} {theme} onTheme={nextTheme} />{:else}<header class="welcome">NuriScada</header>{/if}
-  <OperationsPanel onSession={(s) => session = s} />
-  {#if canRead}<main>
+  <OperationsPanel onSession={(s) => session = s} store={store} />
+  {#if canRead}<main id="main-content">
     <div class="workspace-col">
       <div class="view-mode-bar" role="toolbar" aria-label={m.viewModeAria}>
         <button type="button" class:active={viewMode === "split"} onclick={() => viewMode = "split"}>{m.viewSplit}</button>
         <button type="button" class:active={viewMode === "graphic"} onclick={() => viewMode = "graphic"}>{m.viewGraphic}</button>
         <button type="button" class:active={viewMode === "table"} onclick={() => viewMode = "table"}>{m.viewTable}</button>
+        <button type="button" class:active={kiosk} onclick={toggleKiosk}>{kiosk ? m.exitKiosk : m.kiosk}</button>
       </div>
       {#if viewMode !== "table"}
         <GraphicScreen {store} canEdit={canEditGraphic} />
@@ -77,7 +92,7 @@
       {/if}
     </div>
     <AlarmPanel {store} />
-  </main>{:else}<main class="welcome"><p>{m.loginToSee}</p></main>{/if}
+  </main>{:else}<main id="main-content" class="welcome"><p>{m.loginToSee}</p></main>{/if}
   <footer>{m.safetyNotice}</footer>
 </div>
 
@@ -86,6 +101,23 @@
     display: grid;
     grid-template-rows: auto auto minmax(0, 1fr) auto;
     height: 100%;
+  }
+  .skip-link {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .skip-link:focus-visible {
+    width: auto;
+    height: auto;
+    clip-path: none;
+    z-index: 100;
+    background: var(--surface);
+    color: var(--text);
+    padding: 8px 12px;
+    border: 2px solid var(--focus);
   }
   main {
     display: grid;

@@ -14,7 +14,7 @@ pub mod wire;
 
 pub use hub::{
     AlarmRecord, Batch, BatchItem, DeviceStatus, Frame, Hub, HubSnapshot, Quality, TagSnapshot,
-    TagValue, now_ms,
+    TagValue, diagnostic_line, now_ms,
 };
 pub use plan::{PlanLimits, PlannedBlock, plan, plan_with};
-pub use runner::run_device;
+pub use runner::{run_device, supervise_device};
