@@ -24,6 +24,19 @@ python3 scripts/smoke_packaged.py dist  # 풀어서 서버가 뜨고 인증이 �
 5. 초안에서 확인한다: 파일 목록, `SHA256SUMS`, 릴리스 노트(`docs/release-notes-template.md`에 변경 내용을 적는다), 세 OS 묶음을 내려받아 `docs/user/01-시작하기.md`대로 한 번 실행해 본다.
 6. 공개(Publish)는 사람이 누른다.
 
+## 72시간 장기 운전 확인 (SQ-V03)
+
+정식판 전에는 스테이징 장비(실측정 장비와 같은 부하)에서 72시간을 돌린다.
+매주 토요일 `soak-weekly` 워크플로가 5시간 굴러가는 증거를 쌓고, 릴리스 전 마지막 주에 72시간을 채운다.
+
+```sh
+python3 scripts/soak.py --duration-s 259200 --sample-s 60 --output soak-72h
+```
+
+합격 기준: `status.json`의 `performance_pass`와 `stability_pass`가 모두 `true`이고,
+`resource_errors`가 0이다. 결과(`status.json`, `samples.jsonl`)를 릴리스 검토 기록에 붙인다.
+미달이면 메모리·핸들 누수를 먼저 잡고 릴리스를 미룬다.
+
 ## 알려진 제약
 
 - 코드 서명·공증이 없어 macOS·Windows에서 경고가 뜬다(사용자 문서에 안내).
