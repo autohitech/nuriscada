@@ -56,6 +56,13 @@ jobs:
         run: npm run build
       - name: 의존성 라이선스 검사
         run: npm run licenses
+      - name: 무인 설치 스크립트 점검
+        working-directory: .
+        env:
+          CI_DUMMY_PASSWORD: x
+        run: |
+          touch /tmp/empty.tar.gz
+          bash deploy/install.sh --archive /tmp/empty.tar.gz --admin admin --password-env CI_DUMMY_PASSWORD --dry-run
 
   # 풀 리퀘스트에서는 비용이 작은 Linux에서만 짧게 측정한다.
   # 세 OS 전체 측정은 매일 밤 `nightly.yml`이 한다(macOS·Windows는 사용 시간 배수가 커서 PR마다 돌리지 않는다).
@@ -108,7 +115,9 @@ jobs:
         working-directory: web
         run: npm ci
       - name: Playwright 브라우저 설치
-        run: npx --prefix web playwright install chromium --only-shell
+        run: npx --prefix web playwright install chromium firefox webkit --only-shell
+      - name: 브라우저 OS 의존성 설치
+        run: sudo npx --prefix web playwright install-deps chromium firefox webkit
       - name: 촬영 후 검토용으로 보관
         run: bash scripts/visual.sh --review
       - name: 촬영본 보관
