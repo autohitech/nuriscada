@@ -42,9 +42,11 @@ def check_stability(trace_path):
     rss_last = statistics.median(r["rss_kib"] for r in rows[-third:])
     fds = [r["file_descriptors"] for r in rows]
     rss_growth = (rss_last - rss_first) / rss_first if rss_first > 0 else 0.0
-    fd_growth = max(fds) - min(fds)
-    ok = rss_growth <= 0.10 and fd_growth <= 2
-    note = f"RSS 중앙값 {rss_first}→{rss_last} KiB({rss_growth:+.1%}), FD {min(fds)}→{max(fds)}"
+    # 시작 직후 웜업 점프(연결 풀 등)를 누수로 보지 않도록 중앙값끼리 견준다.
+    fd_first = statistics.median(fds[:third])
+    fd_last = statistics.median(fds[-third:])
+    ok = rss_growth <= 0.10 and abs(fd_last - fd_first) <= 2
+    note = f"RSS 중앙값 {rss_first}→{rss_last} KiB({rss_growth:+.1%}), FD 중앙값 {fd_first}→{fd_last}"
     return rows, ok, note
 
 
