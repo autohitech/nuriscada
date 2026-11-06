@@ -6,7 +6,17 @@
   import { UndoStack } from "../lib/undo-stack";
   import { formatDateTime, formatImportCsv, formatTime, formatValue } from "../lib/format";
   import type { Store } from "../lib/store.svelte";
+  import { validateProjectSpec, type ProjectIssue } from "../lib/validate";
   import { eventLabel, m } from "../lib/i18n.svelte";
+  function issueText(issue: ProjectIssue): string {
+    switch (issue.code) {
+      case "empty-tag-name": return m.issueEmptyTag(issue.tag);
+      case "dup-tag-name": return m.issueDupTag(issue.tag);
+      case "unknown-device": return m.issueUnknownDevice(issue.tag, issue.device);
+      case "dup-widget-id": return m.issueDupWidget(issue.screen, issue.id);
+      case "dup-screen-name": return m.issueDupScreen(issue.screen);
+    }
+  }
   import { apiErrorMessage } from "../lib/api";
   export interface SessionDoc {
     authentication_required: boolean;
@@ -201,6 +211,11 @@
 
   async function saveProject() {
     if (!projectSpec) return;
+    const problems = validateProjectSpec(projectSpec);
+    if (problems.length > 0) {
+      message = problems.map(issueText).join(" / ");
+      return;
+    }
     const res = await request("project", projectSpec) as { project: ProjectSpec; toml: string };
     projectSpec = res.project;
     projectToml = res.toml;
