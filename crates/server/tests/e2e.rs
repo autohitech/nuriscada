@@ -457,6 +457,8 @@ async fn fins_값과_상태가_흐른다() {
     let sim = FinsSim::start("127.0.0.1:0", 300, 64).await.unwrap();
     sim.set_dm(20, &[321]);
     sim.set_cio(1, &[0x0008]);
+    sim.set_wr(3, &[0x0001]);
+    sim.set_hr(4, &[0x0002]);
     let project = Arc::new(
         Project::from_toml(&format!(
             r#"
@@ -483,6 +485,20 @@ device = "omron1"
 space = "cio"
 address = 19
 type = "digital"
+
+[[tag]]
+name = "WRK"
+device = "omron1"
+space = "wr"
+address = 48
+type = "digital"
+
+[[tag]]
+name = "HLD"
+device = "omron1"
+space = "hr"
+address = 65
+type = "digital"
 "#,
             sim.addr()
         ))
@@ -505,6 +521,8 @@ type = "digital"
     .await;
     let doc = json(addr, "/api/v1/tags").await;
     assert_eq!(tag(&doc, "RUN")["value"], true);
+    assert_eq!(tag(&doc, "WRK")["value"], true);
+    assert_eq!(tag(&doc, "HLD")["value"], true);
     let status = json(addr, "/api/v1/status").await;
     assert_eq!(status["devices"][0]["connected"], true);
     let alarms = json(addr, "/api/v1/alarms").await;

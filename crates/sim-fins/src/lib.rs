@@ -3,7 +3,7 @@
 
 //! 시험용 FINS/TCP 시뮬레이터. 개발·CI 전용이며 배포물에 포함하지 않는다.
 //!
-//! 노드 주소 교환(명령 0/1)과 메모리 영역 읽기(0101, DM 워드·CIO 비트)·쓰기(0102, DM 워드·CIO 비트)를 지원한다.
+//! 노드 주소 교환(명령 0/1)과 메모리 영역 읽기(0101, DM 워드·CIO/WR/HR 비트)·쓰기(0102, DM 워드·CIO 비트)를 지원한다.
 //! 실행 중에 메모리 값을 바꾸거나 응답을 늦추고 끊을 수 있어서
 //! 드라이버와 스케줄러의 시험에 쓴다.
 
@@ -22,6 +22,10 @@ pub struct State {
     pub dm: Vec<u16>,
     /// CIO 워드(비트 읽기는 마스크로 계산).
     pub cio: Vec<u16>,
+    /// WR 워드(CIO와 같은 크기).
+    pub wr: Vec<u16>,
+    /// HR 워드(CIO와 같은 크기).
+    pub hr: Vec<u16>,
     /// 응답 전에 기다리는 시간.
     pub response_delay: Duration,
     /// true이면 요청을 받아도 응답하지 않고 연결을 닫는다.
@@ -35,6 +39,8 @@ impl State {
         Self {
             dm: vec![0; word_size],
             cio: vec![0; cio_size],
+            wr: vec![0; cio_size],
+            hr: vec![0; cio_size],
             response_delay: Duration::ZERO,
             drop_connections: false,
             requests_served: 0,
@@ -89,6 +95,16 @@ impl Simulator {
     /// CIO 워드 값을 쓴다.
     pub fn set_cio(&self, start: usize, values: &[u16]) {
         self.state().cio[start..start + values.len()].copy_from_slice(values);
+    }
+
+    /// WR 워드 값을 쓴다.
+    pub fn set_wr(&self, start: usize, values: &[u16]) {
+        self.state().wr[start..start + values.len()].copy_from_slice(values);
+    }
+
+    /// HR 워드 값을 쓴다.
+    pub fn set_hr(&self, start: usize, values: &[u16]) {
+        self.state().hr[start..start + values.len()].copy_from_slice(values);
     }
 }
 
@@ -176,14 +192,19 @@ fn respond(frame: &[u8], state: &mut State) -> Option<Vec<u8>> {
                 data.extend_from_slice(&v.to_be_bytes());
             }
         }
-        0x30 => {
+        0x30..=0x32 => {
             if bit > 15 {
                 return Some(error_response(0x0104, 0x01));
             }
+            let bank: &[u16] = match area {
+                0x30 => &state.cio,
+                0x31 => &state.wr,
+                _ => &state.hr,
+            };
             for i in 0..count {
                 // 비트 읽기는 시작 비트에서 count개 순차 비트를 읽는다.
                 let total_bit = usize::from(addr) * 16 + usize::from(bit) + i;
-                let w = state.cio.get(total_bit / 16).copied().unwrap_or(0);
+                let w = bank.get(total_bit / 16).copied().unwrap_or(0);
                 let on = (w >> (total_bit % 16)) & 1 != 0;
                 data.extend_from_slice(&(u16::from(on)).to_be_bytes());
             }

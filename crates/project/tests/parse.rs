@@ -318,6 +318,23 @@ fn fins_장치의_쓰기와_영역_혼용을_검사한다() {
     assert!(err(&mixed).contains("쓸 수 없다"));
 }
 
+#[test]
+fn fins_wr_hr_읽기는_받고_쓰기는_거부한다() {
+    let tags = format!(
+        "{FINS}\n[[tag]]\nname = \"W\"\ndevice = \"omron1\"\nspace = \"wr\"\naddress = 19\ntype = \"digital\"\n\n[[tag]]\nname = \"H\"\ndevice = \"omron1\"\nspace = \"hr\"\naddress = 32\ntype = \"digital\"\n"
+    );
+    let p = Project::from_toml(&tags).unwrap();
+    assert_eq!(p.tags[2].space, Space::FinsWr);
+    assert_eq!(p.tags[3].space, Space::FinsHr);
+    let reparsed = Project::from_toml(&p.to_toml()).unwrap();
+    assert_eq!(p, reparsed);
+
+    let writable = format!(
+        "{tags}\n[[tag]]\nname = \"W1\"\nwritable = true\ndevice = \"omron1\"\nspace = \"wr\"\naddress = 0\ntype = \"digital\"\n"
+    );
+    assert!(err(&writable).contains("dm·cio 영역만"));
+}
+
 const S7: &str = r#"
 [[device]]
 name = "siemens1"
