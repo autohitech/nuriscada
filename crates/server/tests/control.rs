@@ -1700,3 +1700,36 @@ scan_ms=1000
     assert!(csp.contains("script-src 'none'"), "{headers}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[tokio::test]
+async fn 진단_번들은_로컬_관리자만_받는다() {
+    let st = start(true, false).await;
+    let operator = login(&st, "operator").await;
+    let (code, _, _) = request(
+        st.addr,
+        "GET",
+        "/api/v1/diagnostics",
+        &operator,
+        json!({}),
+        "",
+    )
+    .await;
+    assert_eq!(code, 403);
+    let admin = login(&st, "admin").await;
+    let (code, _, body) =
+        request(st.addr, "GET", "/api/v1/diagnostics", &admin, json!({}), "").await;
+    assert_eq!(code, 200, "{body}");
+    assert!(body["version"].is_string(), "{body}");
+    assert!(body["uptime_s"].is_number(), "{body}");
+    assert!(body["devices"].is_array(), "{body}");
+    assert!(
+        body["alarm_archive"].is_object() || body["alarm_archive"].is_null(),
+        "{body}"
+    );
+    assert!(
+        body["project_toml"]
+            .as_str()
+            .is_some_and(|t| t.contains("[[device]]")),
+        "{body}"
+    );
+}

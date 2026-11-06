@@ -35,6 +35,7 @@ use tokio::task::JoinHandle;
 mod control;
 /// 계정·세션·감사 기록 저장소.
 pub mod error_code;
+pub mod log;
 pub mod operations;
 
 /// 설정이 고른 드라이버를 감싸는 열거형. `Driver` 트레이트가 동적 호출이 안 되므로 열거형으로 다룬다.
@@ -162,7 +163,7 @@ pub fn start_scanners(project: &Arc<Project>, hub: &Arc<Hub>) -> Scanners {
             loop {
                 tokio::select! {
                     _ = tick.tick() => {
-                        eprintln!("진단: {}", hub.diagnostic_line());
+                        crate::log::emit("info", "diagnostic", &hub.diagnostic_line());
                     }
                     _ = shutdown.changed() => {
                         return;
@@ -293,6 +294,7 @@ fn build_router(
         .route("/api/v1/auth/logout", post(control::logout))
         .route("/api/v1/users", post(control::create_user))
         .route("/api/v1/audit", get(control::audit))
+        .route("/api/v1/diagnostics", get(control::diagnostics))
         .route("/api/v1/history/alarms", get(control::alarm_history))
         .route(
             "/api/v1/history/alarms/{id}/ack",

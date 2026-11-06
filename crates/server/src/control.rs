@@ -45,7 +45,7 @@ fn error_detail(status: StatusCode, code: Code, detail: &str) -> Error {
     code.response(status, Some(detail))
 }
 fn internal(e: impl std::fmt::Display) -> Error {
-    eprintln!("조작 API 오류: {e}");
+    crate::log::emit("error", "api", &e.to_string());
     error(StatusCode::INTERNAL_SERVER_ERROR, Code::Internal)
 }
 
@@ -382,6 +382,28 @@ pub(super) async fn audit(
     })
     .await?;
     Ok(Json(json!({"events":rows})))
+}
+/// 진단 번들: 버전·가동 시간·장치 진단·보관 상태·프로젝트 원문. 관리자만 로컬에서 받는다.
+pub(super) async fn diagnostics(
+    State(state): State<AppState>,
+    Extension(user): Extension<Principal>,
+    Extension(peer): Extension<Peer>,
+) -> Result<Json<Value>> {
+    let ops = operations(&state)?;
+    if user.role != Role::Admin
+        || ops.public_read_only
+        || !peer.loopback
+        || state.guard.allowed_hosts.is_none()
+    {
+        return Err(error(StatusCode::FORBIDDEN, Code::AdminRequired));
+    }
+    Ok(Json(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "uptime_s": state.hub.uptime_secs(),
+        "devices": state.hub.devices(),
+        "alarm_archive": ops.archive_status(),
+        "project_toml": ops.project().to_toml(),
+    })))
 }
 
 pub(super) async fn control_tags(State(state): State<AppState>) -> Result<Json<Value>> {
