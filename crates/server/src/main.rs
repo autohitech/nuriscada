@@ -18,6 +18,7 @@ use std::sync::Arc;
 use nuriscada_project::Project;
 use nuriscada_scheduler::Hub;
 use nuriscada_server::{
+    mqtt,
     operations::{Operations, Role},
     router_with_operations, start_scanners,
 };
@@ -41,7 +42,7 @@ fn default_web_dir() -> Option<std::path::PathBuf> {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "사용: nuriscada-server --config <project.toml> [--data-dir <경로>] [--init-admin <계정>] [--password-stdin] [--enable-writes] [--public-read-only] [--listen <주소:포트>] [--allow-external] [--web-dir <경로>]"
+        "사용: nuriscada-server --config <project.toml> [--data-dir <경로>] [--init-admin <계정>] [--password-stdin] [--enable-writes] [--public-read-only] [--listen <주소:포트>] [--allow-external] [--web-dir <경로>] [--mqtt-broker mqtt://<호스트>[:포트]] [--mqtt-topic <앞머리>]"
     );
     ExitCode::from(2)
 }
@@ -57,6 +58,8 @@ async fn main() -> ExitCode {
     let mut password_stdin = false;
     let mut enable_writes = false;
     let mut public_read_only = false;
+    let mut mqtt_broker: Option<String> = None;
+    let mut mqtt_topic = String::from("nuriscada");
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -69,6 +72,12 @@ async fn main() -> ExitCode {
             "--password-stdin" => password_stdin = true,
             "--enable-writes" => enable_writes = true,
             "--public-read-only" => public_read_only = true,
+            "--mqtt-broker" => mqtt_broker = args.next(),
+            "--mqtt-topic" => {
+                if let Some(t) = args.next() {
+                    mqtt_topic = t;
+                }
+            }
             "--version" | "-V" => {
                 println!("nuriscada-server {}", env!("CARGO_PKG_VERSION"));
                 return ExitCode::SUCCESS;
@@ -217,6 +226,10 @@ async fn main() -> ExitCode {
     let archive = operations.start_archive(Arc::clone(&hub));
     let scanners = start_scanners(&project, &hub);
     operations.attach_scanners(scanners).await;
+    if let Some(broker) = mqtt_broker {
+        let hub = Arc::clone(&hub);
+        tokio::spawn(async move { mqtt::run(&broker, &mqtt_topic, hub).await });
+    }
     println!("수신 시작: http://{bound}/api/v1/status");
 
     let web_dir = web_dir

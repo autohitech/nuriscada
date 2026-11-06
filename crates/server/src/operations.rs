@@ -919,16 +919,20 @@ mod history_tests {
             .unwrap()
             .execute_batch("PRAGMA query_only = ON")
             .unwrap();
-        assert!(ops.save_tag_samples(&[snapshot("N", Some(TagValue::Number(1.0)))]).is_err());
-        assert!(ops
-            .save_alarms(&[AlarmRecord {
+        assert!(
+            ops.save_tag_samples(&[snapshot("N", Some(TagValue::Number(1.0)))])
+                .is_err()
+        );
+        assert!(
+            ops.save_alarms(&[AlarmRecord {
                 seq: 1,
                 time_ms: 1,
                 tag: "N".into(),
                 event: "HIHI",
                 value: 1.0,
             }])
-            .is_err());
+            .is_err()
+        );
         // 읽기(감사 조회)는 계속 된다.
         assert!(ops.audit_page(0).is_ok());
     }

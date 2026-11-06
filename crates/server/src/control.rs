@@ -1335,8 +1335,17 @@ value = "AUTO"
             alarm_state: None,
         };
         let motor = project.tags.iter().find(|t| t.name == "MOTOR").unwrap();
-        assert!(check_interlock(&project, &[snap(Some(TagValue::Text("AUTO".into())))], motor).is_none());
-        assert!(check_interlock(&project, &[snap(Some(TagValue::Text("MAN".into())))], motor).is_some());
+        assert!(
+            check_interlock(
+                &project,
+                &[snap(Some(TagValue::Text("AUTO".into())))],
+                motor
+            )
+            .is_none()
+        );
+        assert!(
+            check_interlock(&project, &[snap(Some(TagValue::Text("MAN".into())))], motor).is_some()
+        );
         assert!(check_interlock(&project, &[snap(None)], motor).is_some());
     }
 }

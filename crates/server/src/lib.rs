@@ -36,6 +36,7 @@ mod control;
 /// 계정·세션·감사 기록 저장소.
 pub mod error_code;
 pub mod log;
+pub mod mqtt;
 pub mod operations;
 
 /// 설정이 고른 드라이버를 감싸는 열거형. `Driver` 트레이트가 동적 호출이 안 되므로 열거형으로 다룬다.

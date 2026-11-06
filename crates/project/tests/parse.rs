@@ -637,7 +637,10 @@ height = 120.0
 "#
     );
     let p = Project::from_toml(&base).unwrap();
-    assert_eq!(p.screens[0].widgets[0].move_tag.as_deref(), Some("PUMP_RUN"));
+    assert_eq!(
+        p.screens[0].widgets[0].move_tag.as_deref(),
+        Some("PUMP_RUN")
+    );
     let reparsed = Project::from_toml(&p.to_toml()).unwrap();
     assert_eq!(p, reparsed);
     let bad = base.replace("move_tag = \"PUMP_RUN\"", "move_tag = \"MISSING\"");

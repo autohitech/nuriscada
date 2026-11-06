@@ -969,7 +969,9 @@ impl Project {
                         t.name
                     ));
                 }
-                let kind = kind_by_name.get(&cond.tag).map_or("digital", String::as_str);
+                let kind = kind_by_name
+                    .get(&cond.tag)
+                    .map_or("digital", String::as_str);
                 let kind_ok = matches!(
                     (&cond.value, kind),
                     (InterlockValue::Bool(_), "digital")
@@ -1045,7 +1047,8 @@ impl Project {
                     return invalid(format!("{wl}: max는 min보다 커야 한다"));
                 }
                 w.tag = check_tag_ref(&wl, &tag_names, w.tag.take(), "태그")?;
-                w.visible_tag = check_tag_ref(&wl, &tag_names, w.visible_tag.take(), "가시성 태그")?;
+                w.visible_tag =
+                    check_tag_ref(&wl, &tag_names, w.visible_tag.take(), "가시성 태그")?;
                 w.rotate_tag = check_tag_ref(&wl, &tag_names, w.rotate_tag.take(), "회전 태그")?;
                 w.move_tag = check_tag_ref(&wl, &tag_names, w.move_tag.take(), "이동 태그")?;
             }

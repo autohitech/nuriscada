@@ -117,6 +117,9 @@ fn 문자열_조건의_종류가_맞지_않으면_거부한다() {
         )
         .replace("tag = \"READY\"\nvalue = true", "tag = \"MODE\"\nvalue = 1");
     assert!(Project::from_toml(&text).is_err());
-    let text2 = BASE.replace("tag = \"READY\"\nvalue = true", "tag = \"READY\"\nvalue = \"x\"");
+    let text2 = BASE.replace(
+        "tag = \"READY\"\nvalue = true",
+        "tag = \"READY\"\nvalue = \"x\"",
+    );
     assert!(Project::from_toml(&text2).is_err());
 }
