@@ -29,4 +29,4 @@ python3 scripts/smoke_packaged.py dist  # 풀어서 서버가 뜨고 인증이 �
 - 코드 서명·공증이 없어 macOS·Windows에서 경고가 뜬다(사용자 문서에 안내).
 - macOS는 arm64만, Linux·Windows는 x86-64만 만든다. 다른 조합은 아직 없다.
 - GitHub Actions 사용 한도가 부족하면 macOS·Windows 작업이 시작되지 않는다. 한도를 확인하고 재실행한다.
-- 자동 업데이트, 설치 프로그램, 서비스 등록은 없다.
+- 자동 업데이트와 설치 프로그램은 없다. 서비스 등록은 `deploy/nuriscada.service` 샘플과 `deploy/README.md` 절차(버전별 디렉터리 + `current` 링크, 링크 되돌리기가 롤백)를 쓴다.

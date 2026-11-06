@@ -1,0 +1,23 @@
+[Unit]
+Description=NuriScada server (local SCADA, loopback only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nuriscada
+Group=nuriscada
+# 버전별 묶음을 /opt/nuriscada/<버전>에 풀고 current를 걸어 둔다(롤백은 심볼릭 링크만 되돌린다).
+WorkingDirectory=/opt/nuriscada/current
+ExecStart=/opt/nuriscada/current/bin/nuriscada-server --config /etc/nuriscada/project.toml --data-dir /var/lib/nuriscada
+# 쓰기 활성화는 루프백 바인딩에서만 가능하다. 필요할 때만 --enable-writes를 덧붙인다.
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nuriscada
+
+[Install]
+WantedBy=multi-user.target
