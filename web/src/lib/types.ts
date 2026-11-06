@@ -141,6 +141,7 @@ export interface GraphicWidgetSpec {
   kind: GraphicWidgetKind;
   label: string;
   tag: string | null;
+  visible_tag: string | null;
   x: number;
   y: number;
   width: number;

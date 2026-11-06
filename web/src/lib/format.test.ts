@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { csvCell, formatImportCsv } from "./format";
+import { csvCell, formatImportCsv, isVisible } from "./format";
 import type { ImportReport } from "./types";
 
 const report = (over: Partial<ImportReport> = {}): ImportReport => ({
@@ -46,5 +46,21 @@ describe("formatImportCsv", () => {
     expect(lines).toContain('ignored,5,ST,"쉼표, 포함 ""인용"""');
     expect(lines).toContain("unreadable,6,BAD,필드 부족");
     expect(csv.endsWith("\r\n")).toBe(true);
+  });
+});
+
+describe("isVisible", () => {
+  it("hides on bad quality or missing value (fail-closed)", () => {
+    expect(isVisible(true, "bad")).toBe(false);
+    expect(isVisible(1, "bad")).toBe(false);
+    expect(isVisible(null, "good")).toBe(false);
+  });
+  it("shows only truthy values", () => {
+    expect(isVisible(true, "good")).toBe(true);
+    expect(isVisible(false, "good")).toBe(false);
+    expect(isVisible(1, "good")).toBe(true);
+    expect(isVisible(0, "good")).toBe(false);
+    expect(isVisible("on", "good")).toBe(true);
+    expect(isVisible("", "good")).toBe(false);
   });
 });

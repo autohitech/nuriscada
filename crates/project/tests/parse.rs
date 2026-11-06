@@ -524,3 +524,38 @@ scale = { plc_base = 0, plc_full = 100, base = 0, full = 100 }
     let addr: std::net::SocketAddr = p.server.listen.parse().unwrap();
     assert!(addr.ip().is_loopback(), "listen = {}", p.server.listen);
 }
+
+#[test]
+fn 위젯_가시성_조건을_읽고_다시_쓴다() {
+    let with_visibility = format!(
+        r#"{GOOD}
+[[screen]]
+name = "주 공정"
+width = 800
+height = 480
+
+[[screen.widget]]
+id = "w1"
+kind = "tank"
+label = "수위 탱크"
+tag = "TANK_LEVEL"
+visible_tag = "PUMP_RUN"
+x = 40.0
+y = 50.0
+width = 180.0
+height = 200.0
+min = 0.0
+max = 100.0
+"#
+    );
+    let p = Project::from_toml(&with_visibility).unwrap();
+    assert_eq!(
+        p.screens[0].widgets[0].visible_tag.as_deref(),
+        Some("PUMP_RUN")
+    );
+    let reparsed = Project::from_toml(&p.to_toml()).unwrap();
+    assert_eq!(p, reparsed);
+
+    let bad = with_visibility.replace("visible_tag = \"PUMP_RUN\"", "visible_tag = \"MISSING\"");
+    assert!(err(&bad).contains("가시성"));
+}

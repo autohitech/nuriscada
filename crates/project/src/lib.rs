@@ -557,6 +557,9 @@ pub struct GraphicWidgetSpec {
     pub label: String,
     /// 연결할 태그 이름(선택).
     pub tag: Option<String>,
+    /// 가시성 조건 태그 이름(선택). 있으면 값이 참일 때만 보인다.
+    #[serde(default)]
+    pub visible_tag: Option<String>,
     /// X 좌표.
     pub x: f64,
     /// Y 좌표.
@@ -1022,6 +1025,16 @@ impl Project {
                         w.tag = Some(trimmed.to_string());
                     }
                 }
+                if let Some(tag_name) = &w.visible_tag {
+                    let trimmed = tag_name.trim();
+                    if trimmed.is_empty() {
+                        w.visible_tag = None;
+                    } else if !tag_names.contains(trimmed) {
+                        return invalid(format!("{wl}: 없는 가시성 태그 `{trimmed}`"));
+                    } else {
+                        w.visible_tag = Some(trimmed.to_string());
+                    }
+                }
             }
             screens.push(s);
         }
@@ -1267,6 +1280,9 @@ impl Project {
                 }
                 if let Some(tag) = &w.tag {
                     out.push_str(&format!("tag = {}\n", toml_str(tag)));
+                }
+                if let Some(tag) = &w.visible_tag {
+                    out.push_str(&format!("visible_tag = {}\n", toml_str(tag)));
                 }
                 out.push_str(&format!("x = {}\n", toml_f64(w.x)));
                 out.push_str(&format!("y = {}\n", toml_f64(w.y)));

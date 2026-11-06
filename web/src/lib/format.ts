@@ -59,6 +59,13 @@ export function formatValue(value: number | boolean | string | null, on = "ON", 
   if (Object.is(value, -0)) return numberFormat().format(0);
   return numberFormat().format(value);
 }
+/** 가시성 조건: 값이 없거나 통신 불량이면 숨긴다(닫힘 실패). 0·거짓·빈 문자열도 숨긴다. */
+export function isVisible(value: number | boolean | string | null, quality: "good" | "bad"): boolean {
+  if (quality !== "good" || value === null) return false;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.length > 0;
+  return value !== 0;
+}
 
 /** RFC 4180 인용 규칙으로 한 셀을 감싼다. */
 export function csvCell(text: string): string {

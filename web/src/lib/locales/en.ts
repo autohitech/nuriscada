@@ -278,6 +278,7 @@ export const en: Messages = {
   selectedWidget: (id) => `Selected widget (${id})`,
   displayName: "Display name",
   linkedTag: "Linked tag",
+  visibilityTag: "Visibility condition tag",
   notLinked: "(not linked)",
   xCoord: "X position",
   yCoord: "Y position",

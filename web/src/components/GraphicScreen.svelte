@@ -4,7 +4,7 @@
   import { m } from "../lib/i18n.svelte";
   import { apiErrorMessage } from "../lib/api";
   import { onMount } from "svelte";
-  import { formatValue } from "../lib/format";
+  import { formatValue, isVisible } from "../lib/format";
   import { UndoStack } from "../lib/undo-stack";
   import type { Store } from "../lib/store.svelte";
   import type {
@@ -122,6 +122,7 @@
         kind,
         label: t.name,
         tag: t.name,
+        visible_tag: null,
         x: 24 + col * 190,
         y: 24 + row * 150,
         width: 170,
@@ -164,6 +165,7 @@
       if (!res.ok) return;
       const data = (await res.json()) as { screens?: ScreenSpec[] };
       if (Array.isArray(data.screens)) {
+        for (const s of data.screens) for (const w of s.widget) w.visible_tag ??= null;
         screens = data.screens;
         if (activeIndex >= screens.length) activeIndex = 0;
         clearHistory();
@@ -263,6 +265,7 @@
       kind,
       label: defaultTag ?? widgetKindLabel(kind),
       tag: defaultTag,
+      visible_tag: null,
       x: col,
       y: row,
       width: kind === "label" ? 200 : 160,
@@ -313,6 +316,7 @@
           kind: w.kind,
           label: w.label,
           tag: w.tag && w.tag.trim() ? w.tag.trim() : null,
+          visible_tag: w.visible_tag && w.visible_tag.trim() ? w.visible_tag.trim() : null,
           x: Number(w.x),
           y: Number(w.y),
           width: Number(w.width),
@@ -498,6 +502,8 @@
 
         {#each currentScreen.widget as w (w.id)}
           {@const tag = w.tag ? tagByName.get(w.tag) : undefined}
+          {@const vtag = w.visible_tag ? tagByName.get(w.visible_tag) : undefined}
+          {@const shown = !w.visible_tag || (vtag !== undefined && isVisible(vtag.value, vtag.quality))}
           {@const isSelected = editing && selectedWidgetId === w.id}
           {@const ratio = fillRatio(tag, w)}
           {@const active = isActiveDigital(tag)}
@@ -510,6 +516,8 @@
             data-widget-id={w.id}
             data-widget-kind={w.kind}
             transform={`translate(${w.x}, ${w.y})`}
+            display={!shown && !editing ? "none" : undefined}
+            opacity={!shown && editing ? 0.35 : undefined}
             onpointerdown={(e) => onWidgetPointerDown(e, w)}
             onkeydown={(e) => {
               if (e.key === "Enter" || e.key === " ") selectedWidgetId = w.id;
@@ -749,6 +757,15 @@
               </select>
             </label>
           {/if}
+          <label>
+            {m.visibilityTag}
+            <select bind:value={selectedWidget.visible_tag}>
+              <option value={null}>{m.notLinked}</option>
+              {#each store.tags as t (t.name)}
+                <option value={t.name}>{t.name} ({t.kind})</option>
+              {/each}
+            </select>
+          </label>
           <div class="row-2">
             <label>
               {m.xCoord}
