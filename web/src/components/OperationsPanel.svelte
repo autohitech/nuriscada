@@ -28,6 +28,28 @@
   let { onSession, store }: { onSession: (session: SessionDoc) => void; store: Store } = $props();
   let session = $state<SessionDoc | null>(null);
   let username = $state("");
+  let selectedTags = $state<number[]>([]);
+  let batchDevice = $state("");
+  let batchUnit = $state(1);
+  let batchWritable = $state<"keep" | "on" | "off">("keep");
+  function toggleTagSelect(index: number): void {
+    selectedTags = selectedTags.includes(index)
+      ? selectedTags.filter((i) => i !== index)
+      : [...selectedTags, index];
+  }
+  function applyBatch(): void {
+    if (!projectSpec || selectedTags.length === 0) return;
+    commitProject();
+    for (const i of selectedTags) {
+      const t = projectSpec.tag[i];
+      if (!t) continue;
+      if (batchDevice !== "") t.device = batchDevice;
+      if (Number.isInteger(batchUnit) && batchUnit >= 0 && batchUnit <= 255) t.unit = batchUnit;
+      if (batchWritable !== "keep") t.writable = batchWritable === "on";
+    }
+    projectSpec.tag = [...projectSpec.tag];
+    selectedTags = [];
+  }
   let password = $state("");
   let message = $state("");
   let busy = $state(false);
@@ -60,6 +82,7 @@
     const prev = projectHistory.undo(current);
     if (!prev) return;
     projectSpec = prev;
+    selectedTags = [];
     syncProjectHistory();
   }
   function redoProject(): void {
@@ -68,6 +91,7 @@
     const next = projectHistory.redo(current);
     if (!next) return;
     projectSpec = next;
+    selectedTags = [];
     syncProjectHistory();
   }
   let events = $state<{ seq: number; event: { time_ms: number; actor: string; source: string; action: string; target: string; detail: unknown } }[]>([]);
@@ -130,6 +154,7 @@
     projectSpec = res.project;
     projectToml = res.toml;
     projectHistory.clear();
+    selectedTags = [];
     syncProjectHistory();
   }
   function addDevice() {
@@ -174,6 +199,7 @@
     if (!projectSpec) return;
     commitProject();
     projectSpec.tag = projectSpec.tag.filter((_, i) => i !== index);
+    selectedTags = [];
   }
 
   function onTagTypeChange(tag: TagSpec) {
@@ -435,10 +461,38 @@
             <div class="inline">
               <label>{m.tagFilter} <input bind:value={tagFilterText} maxlength="64" placeholder={m.tagFilterPlaceholder} /></label>
             </div>
+            {#if selectedTags.length > 0}
+              <div class="inline">
+                <span>{m.selectedCount(selectedTags.length)}</span>
+                <label>{m.colDevice}
+                  <select bind:value={batchDevice}>
+                    <option value="">{m.batchKeep}</option>
+                    {#each projectSpec?.device ?? [] as d (d.name)}
+                      <option value={d.name}>{d.name}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label>{m.unitNo} <input type="number" min="0" max="255" bind:value={batchUnit} /></label>
+                <label>{m.allowWrite}
+                  <select bind:value={batchWritable}>
+                    <option value="keep">{m.batchKeep}</option>
+                    <option value="on">{m.batchOn}</option>
+                    <option value="off">{m.batchOff}</option>
+                  </select>
+                </label>
+                <button type="button" disabled={busy} onclick={applyBatch}>{m.batchApply}</button>
+                <button type="button" disabled={busy} onclick={() => { selectedTags = []; }}>{m.clearSelection}</button>
+              </div>
+            {:else}
+              <div class="inline">
+                <button type="button" disabled={busy} onclick={() => { selectedTags = (projectSpec?.tag ?? []).map((_, i) => i); }}>{m.selectAll}</button>
+              </div>
+            {/if}
             {#each projectSpec.tag as tag, ti (ti)}
               {#if tagFilterText.trim() === "" || tag.name.toLowerCase().includes(tagFilterText.trim().toLowerCase()) || tag.device.toLowerCase().includes(tagFilterText.trim().toLowerCase())}
               <div class="editor-row">
                 <div class="inline">
+                  <label><input type="checkbox" checked={selectedTags.includes(ti)} onchange={() => toggleTagSelect(ti)} title={tag.name} /> {tag.name}</label>
                   <label>{m.tagName} <input bind:value={tag.name} required /></label>
                   <label>{m.colDevice} <input bind:value={tag.device} required /></label>
                   <label>{m.unitNo} <input type="number" min="0" max="255" bind:value={tag.unit} required /></label>
