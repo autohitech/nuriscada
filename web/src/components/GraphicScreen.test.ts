@@ -32,7 +32,7 @@ describe("GraphicScreen", () => {
         recent: [],
       },
     });
-    const { body } = render(GraphicScreen, { props: { store, canEditGraphic: false } });
+    const { body } = render(GraphicScreen, { props: { store, canEdit: false } });
     expect(body).toContain("graphic-svg");
     // 게이지 채움: 너비 170 → 막대 142의 절반.
     expect(body).toContain('width="71"');
