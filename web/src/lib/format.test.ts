@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { csvCell, formatImportCsv, isVisible, shouldBeep } from "./format";
+import { csvCell, fillRatio, formatImportCsv, isActive, isVisible, shouldBeep } from "./format";
 import type { ImportReport } from "./types";
 
 const report = (over: Partial<ImportReport> = {}): ImportReport => ({
@@ -75,5 +75,24 @@ describe("shouldBeep", () => {
     expect(shouldBeep("all", "info")).toBe(true);
     expect(shouldBeep("all", "bad")).toBe(true);
     expect(shouldBeep("all", "normal")).toBe(false);
+  });
+});
+
+describe("widget geometry", () => {
+  it("clamps fill ratio to the range", () => {
+    expect(fillRatio(null, 0, 100)).toBe(0);
+    expect(fillRatio(50, 0, 100)).toBe(0.5);
+    expect(fillRatio(-5, 0, 100)).toBe(0);
+    expect(fillRatio(150, 0, 100)).toBe(1);
+    expect(fillRatio(50, 100, 0)).toBe(0);
+    expect(fillRatio(50, 10, 10)).toBe(0);
+  });
+  it("judges active from truthy values", () => {
+    expect(isActive(true)).toBe(true);
+    expect(isActive(false)).toBe(false);
+    expect(isActive(1)).toBe(true);
+    expect(isActive(0)).toBe(false);
+    expect(isActive(null)).toBe(false);
+    expect(isActive("on")).toBe(false);
   });
 });

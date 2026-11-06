@@ -81,6 +81,20 @@ export function shouldBeep(rule: AlarmSoundRule, severity: Severity): boolean {
       return severity !== "normal";
   }
 }
+/** 탱크·게이지 채움 비율. 범위가 뒤집혔거나 값이 없으면 0으로 둔다. */
+export function fillRatio(value: number | null, min: number, max: number): number {
+  if (value === null) return 0;
+  const span = max - min;
+  if (!(span > 0)) return 0;
+  return Math.max(0, Math.min(1, (value - min) / span));
+}
+
+/** 운전·점등 판정: 참·0 초과면 켜짐이다. */
+export function isActive(value: boolean | number | string | null): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value > 0;
+  return false;
+}
 
 /** RFC 4180 인용 규칙으로 한 셀을 감싼다. */
 export function csvCell(text: string): string {

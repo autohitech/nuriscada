@@ -4,7 +4,7 @@
   import { m } from "../lib/i18n.svelte";
   import { apiErrorMessage } from "../lib/api";
   import { onMount } from "svelte";
-  import { formatValue, isVisible } from "../lib/format";
+  import { fillRatio, formatValue, isActive, isVisible } from "../lib/format";
   import { UndoStack } from "../lib/undo-stack";
   import type { Store } from "../lib/store.svelte";
   import type {
@@ -391,20 +391,6 @@
     dragState = null;
   }
 
-  function fillRatio(tag: TagSnapshot | undefined, w: GraphicWidgetSpec): number {
-    if (!tag || typeof tag.value !== "number") return 0;
-    const span = w.max - w.min;
-    if (span <= 0) return 0;
-    return Math.max(0, Math.min(1, (tag.value - w.min) / span));
-  }
-
-  function isActiveDigital(tag: TagSnapshot | undefined): boolean {
-    if (!tag) return false;
-    if (typeof tag.value === "boolean") return tag.value;
-    if (typeof tag.value === "number") return tag.value > 0;
-    return false;
-  }
-
   function widgetStroke(tag: TagSnapshot | undefined, isSelected: boolean): string {
     if (isSelected) return "var(--accent, #4ea1ff)";
     if (!tag) return "var(--border)";
@@ -505,8 +491,8 @@
           {@const vtag = w.visible_tag ? tagByName.get(w.visible_tag) : undefined}
           {@const shown = !w.visible_tag || (vtag !== undefined && isVisible(vtag.value, vtag.quality))}
           {@const isSelected = editing && selectedWidgetId === w.id}
-          {@const ratio = fillRatio(tag, w)}
-          {@const active = isActiveDigital(tag)}
+          {@const ratio = fillRatio(typeof tag?.value === "number" ? tag.value : null, w.min, w.max)}
+          {@const active = isActive(tag?.value ?? null)}
           {@const stroke = widgetStroke(tag, isSelected)}
           <g
             class="scada-widget"
