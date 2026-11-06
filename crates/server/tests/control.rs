@@ -1307,3 +1307,138 @@ writable=true
     assert_eq!(code, 200, "{body}");
     assert!(sim.state().m[83]);
 }
+
+#[tokio::test]
+async fn modbus_묶음_쓰기가_한_번에_가고_항목별_결과를_돌려준다() {
+    let sim = Simulator::start("127.0.0.1:0", 200).await.unwrap();
+    let project = Arc::new(
+        Project::from_toml(&format!(
+            r#"
+[[device]]
+name="sim"
+driver="modbus-tcp"
+address="{}"
+scan_ms=20
+[[tag]]
+name="P0"
+device="sim"
+space="coil"
+address=0
+type="digital"
+writable=true
+[[tag]]
+name="P1"
+device="sim"
+space="coil"
+address=1
+type="digital"
+writable=true
+[[tag]]
+name="P2"
+device="sim"
+space="coil"
+address=2
+type="digital"
+writable=true
+[[tag]]
+name="LEVEL0"
+device="sim"
+space="holding"
+address=10
+type="analog"
+writable=true
+scale={{plc_base=0,plc_full=100,base=0,full=1000}}
+[[tag]]
+name="LEVEL1"
+device="sim"
+space="holding"
+address=11
+type="analog"
+writable=true
+scale={{plc_base=0,plc_full=100,base=0,full=1000}}
+[[tag]]
+name="READONLY"
+device="sim"
+space="holding"
+address=12
+type="analog"
+scale={{plc_base=0,plc_full=100,base=0,full=1000}}
+"#,
+            sim.addr()
+        ))
+        .unwrap(),
+    );
+    let ops = Operations::open_with_mode(
+        std::path::Path::new(":memory:"),
+        project.clone(),
+        true,
+        false,
+    )
+    .unwrap();
+    ops.create_user("operator", PASSWORD, Role::Operator, false, "cli", "cli")
+        .unwrap();
+    let hub = Hub::new(&project);
+    let archive = ops.start_archive(hub.clone());
+    let scanners = start_scanners(&project, &hub);
+    ops.attach_scanners(scanners).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router_with_operations(hub, addr, None, ops.clone());
+    let _task = tokio::spawn(async move {
+        let _archive = archive;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let cookie = login_at(addr, false, "operator").await;
+    for _ in 0..50 {
+        let (_, _, tags) = request(addr, "GET", "/api/v1/tags", &cookie, json!({}), "").await;
+        let good = tags["tags"]
+            .as_array()
+            .map(|ts| {
+                ts.iter()
+                    .all(|t| t.get("quality").and_then(|q| q.as_str()) == Some("good"))
+            })
+            .unwrap_or(false);
+        if good {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let (code, _, body) = request(
+        addr,
+        "POST",
+        "/api/v1/control/tags/batch",
+        &cookie,
+        json!({"writes":[
+            {"name":"P0","value":true},
+            {"name":"P1","value":false},
+            {"name":"P2","value":true},
+            {"name":"LEVEL0","value":11},
+            {"name":"LEVEL1","value":22},
+            {"name":"READONLY","value":33},
+            {"name":"MISSING","value":1}
+        ]}),
+        "X-NuriScada-Request: 1\r\n",
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 7);
+    for r in &results[0..5] {
+        assert_eq!(r["outcome"], "device_acknowledged", "{r}");
+    }
+    assert_eq!(results[5]["outcome"], "not_writable");
+    assert_eq!(results[6]["outcome"], "not_writable");
+    assert_eq!(body["ok"], false);
+    assert!(sim.state().coils[0]);
+    assert!(!sim.state().coils[1]);
+    assert!(sim.state().coils[2]);
+    assert_eq!(sim.state().holding_registers[10], 11);
+    assert_eq!(sim.state().holding_registers[11], 22);
+    // 묶음 횟수 대신 값으로 확인한다. 묶음 계획 자체는 plan_batch_steps 단위 시험이 보장한다.
+}

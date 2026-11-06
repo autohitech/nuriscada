@@ -45,6 +45,77 @@ pub struct ModbusTcpClient {
 }
 
 impl ModbusTcpClient {
+    /// 다중 코일(15) 또는 다중 보유 레지스터(16)를 쓴다. 불명확한 결과를 자동 재시도하지 않는다.
+    pub async fn write_multiple(
+        &mut self,
+        unit: u8,
+        space: u16,
+        address: u16,
+        coils: &[bool],
+        registers: &[u16],
+    ) -> Result<(), DriverError> {
+        if unit == 0 {
+            return Err(DriverError::InvalidRequest(
+                "쓰기에는 방송 유닛 0을 허용하지 않는다".into(),
+            ));
+        }
+        self.transaction = self.transaction.wrapping_add(1);
+        let frame = match space {
+            SPACE_COILS => crate::protocol::encode_write_multiple_coils(
+                self.transaction,
+                unit,
+                address,
+                coils,
+            )?,
+            SPACE_HOLDING_REGISTERS => crate::protocol::encode_write_multiple_registers(
+                self.transaction,
+                unit,
+                address,
+                registers,
+            )?,
+            _ => {
+                return Err(DriverError::InvalidRequest(
+                    "다중 쓰기는 코일 또는 보유 레지스터에만 쓸 수 있다".into(),
+                ));
+            }
+        };
+        let started = Instant::now();
+        let result = async {
+            self.connect().await?;
+            let stream = self.stream.as_mut().expect("연결 확인");
+            timeout(self.timeout, async {
+                stream
+                    .write_all(&frame)
+                    .await
+                    .map_err(|e| DriverError::Connection(e.to_string()))?;
+                let mut header = [0; MBAP_LEN];
+                stream
+                    .read_exact(&mut header)
+                    .await
+                    .map_err(|e| DriverError::Connection(e.to_string()))?;
+                let rest = remaining_after_header(&header)?;
+                let mut response = header.to_vec();
+                response.resize(MBAP_LEN + rest, 0);
+                stream
+                    .read_exact(&mut response[MBAP_LEN..])
+                    .await
+                    .map_err(|e| DriverError::Connection(e.to_string()))?;
+                crate::protocol::decode_write_multiple_response(&frame, &response)
+            })
+            .await
+            .map_err(|_| DriverError::Timeout)?
+        }
+        .await;
+        if result.is_ok() {
+            self.status.requests_ok += 1;
+            self.status.last_round_trip = Some(started.elapsed());
+        } else {
+            self.status.requests_failed += 1;
+            self.drop_connection();
+        }
+        result
+    }
+
     /// 단일 코일(05) 또는 보유 레지스터(06)를 쓴다. 불명확한 결과를 자동 재시도하지 않는다.
     pub async fn write_single(
         &mut self,

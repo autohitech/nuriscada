@@ -205,6 +205,109 @@ pub fn decode_read_response(req: &ReadRequest, frame: &[u8]) -> Result<BlockData
     }
 }
 
+/// 다중 코일 쓰기(15)의 한 요청 묶음 한도.
+pub const MAX_WRITE_COILS: usize = 1968;
+/// 다중 레지스터 쓰기(16)의 한 요청 묶음 한도.
+pub const MAX_WRITE_REGISTERS: usize = 123;
+
+/// 다중 코일 쓰기(15) 요청을 만든다.
+pub fn encode_write_multiple_coils(
+    transaction: u16,
+    unit: u8,
+    start: u16,
+    values: &[bool],
+) -> Result<Vec<u8>, DriverError> {
+    if values.is_empty() || values.len() > MAX_WRITE_COILS {
+        return Err(DriverError::InvalidRequest(format!(
+            "코일 쓰기 개수 {}는 1~{MAX_WRITE_COILS}이어야 한다",
+            values.len()
+        )));
+    }
+    let mut data = vec![0u8; values.len().div_ceil(8)];
+    for (i, &v) in values.iter().enumerate() {
+        if v {
+            data[i / 8] |= 1 << (i % 8);
+        }
+    }
+    let mut frame = Vec::with_capacity(MBAP_LEN + 6 + data.len());
+    frame.extend_from_slice(&transaction.to_be_bytes());
+    frame.extend_from_slice(&0u16.to_be_bytes());
+    frame.extend_from_slice(&(7u16 + data.len() as u16).to_be_bytes());
+    frame.push(unit);
+    frame.push(0x0F);
+    frame.extend_from_slice(&start.to_be_bytes());
+    frame.extend_from_slice(&(values.len() as u16).to_be_bytes());
+    frame.push(data.len() as u8);
+    frame.extend_from_slice(&data);
+    Ok(frame)
+}
+
+/// 다중 레지스터 쓰기(16) 요청을 만든다.
+pub fn encode_write_multiple_registers(
+    transaction: u16,
+    unit: u8,
+    start: u16,
+    values: &[u16],
+) -> Result<Vec<u8>, DriverError> {
+    if values.is_empty() || values.len() > MAX_WRITE_REGISTERS {
+        return Err(DriverError::InvalidRequest(format!(
+            "레지스터 쓰기 개수 {}는 1~{MAX_WRITE_REGISTERS}이어야 한다",
+            values.len()
+        )));
+    }
+    let mut frame = Vec::with_capacity(MBAP_LEN + 6 + values.len() * 2);
+    frame.extend_from_slice(&transaction.to_be_bytes());
+    frame.extend_from_slice(&0u16.to_be_bytes());
+    frame.extend_from_slice(&(7u16 + values.len() as u16 * 2).to_be_bytes());
+    frame.push(unit);
+    frame.push(0x10);
+    frame.extend_from_slice(&start.to_be_bytes());
+    frame.extend_from_slice(&(values.len() as u16).to_be_bytes());
+    frame.push(values.len() as u8 * 2);
+    for v in values {
+        frame.extend_from_slice(&v.to_be_bytes());
+    }
+    Ok(frame)
+}
+
+/// 다중 쓰기(15·16) 응답을 검사한다. 시작·개수 메아리와 거래·유닛 일치를 본다.
+/// 장치 오류는 요청 프레임과 함께 돌려준다.
+pub fn decode_write_multiple_response(request: &[u8], response: &[u8]) -> Result<(), DriverError> {
+    // 예외 응답은 9바이트로 짧다. 먼저 본다.
+    if response.len() < MBAP_LEN + 2 {
+        return Err(DriverError::Protocol(format!(
+            "다중 쓰기 응답이 너무 짧다: {}",
+            response.len()
+        )));
+    }
+    if response[..2] != request[..2] || response[6] != request[6] {
+        return Err(DriverError::Protocol(
+            "쓰기 응답 거래·유닛 식별자 불일치".into(),
+        ));
+    }
+    let function = response[7];
+    if function == request[7] | 0x80 {
+        let code = *response
+            .get(8)
+            .ok_or_else(|| DriverError::Protocol("오류 응답에 코드가 없다".into()))?;
+        return Err(DriverError::Device {
+            code,
+            text: exception_text(code).to_string(),
+        });
+    }
+    if function != request[7] {
+        return Err(DriverError::Protocol(format!(
+            "기능 코드가 다르다: 요청 {}, 응답 {function}",
+            request[7]
+        )));
+    }
+    if response.len() != MBAP_LEN + 5 || response[8..12] != request[8..12] {
+        return Err(DriverError::Protocol(
+            "쓰기 응답 시작·개수 메아리 불일치".into(),
+        ));
+    }
+    Ok(())
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,5 +420,60 @@ mod tests {
         assert_eq!(remaining_after_header(&ok).unwrap(), 5);
         assert!(remaining_after_header(&[0, 1, 0, 0, 0, 1, 1]).is_err());
         assert!(remaining_after_header(&[0, 1, 0, 0, 0xFF, 0xFF, 1]).is_err());
+    }
+
+    #[test]
+    fn encodes_write_multiple_coils() {
+        // 코일 0x13부터 10개: 1 0 1 0 1 1 0 0 1 0.
+        let values = [
+            true, false, true, false, true, true, false, false, true, false,
+        ];
+        let frame = encode_write_multiple_coils(7, 1, 0x13, &values).unwrap();
+        assert_eq!(
+            frame,
+            [
+                0x00, 0x07, 0x00, 0x00, 0x00, 0x09, 0x01, 0x0F, 0x00, 0x13, 0x00, 0x0A, 0x02, 0x35,
+                0x01
+            ]
+        );
+        assert!(encode_write_multiple_coils(7, 1, 0, &[]).is_err());
+        assert!(encode_write_multiple_coils(7, 1, 0, &vec![false; 1969]).is_err());
+    }
+
+    #[test]
+    fn encodes_write_multiple_registers() {
+        let frame = encode_write_multiple_registers(7, 1, 1, &[0x1234, 0x5678]).unwrap();
+        assert_eq!(
+            frame,
+            [
+                0x00, 0x07, 0x00, 0x00, 0x00, 0x0B, 0x01, 0x10, 0x00, 0x01, 0x00, 0x02, 0x04, 0x12,
+                0x34, 0x56, 0x78
+            ]
+        );
+        assert!(encode_write_multiple_registers(7, 1, 0, &[]).is_err());
+        assert!(encode_write_multiple_registers(7, 1, 0, &vec![0; 124]).is_err());
+    }
+
+    #[test]
+    fn decodes_write_multiple_response() {
+        let req = encode_write_multiple_registers(7, 1, 1, &[0x1234, 0x5678]).unwrap();
+        let ok = vec![
+            0x00, 0x07, 0x00, 0x00, 0x00, 0x06, 0x01, 0x10, 0x00, 0x01, 0x00, 0x02,
+        ];
+        assert!(decode_write_multiple_response(&req, &ok).is_ok());
+        // 거래 불일치.
+        let mut bad = ok.clone();
+        bad[1] = 0x08;
+        assert!(decode_write_multiple_response(&req, &bad).is_err());
+        // 시작·개수 메아리 불일치.
+        let mut bad = ok.clone();
+        bad[9] = 0x02;
+        assert!(decode_write_multiple_response(&req, &bad).is_err());
+        // 장치 오류(예외 응답 9바이트).
+        let err_frame = vec![0x00, 0x07, 0x00, 0x00, 0x00, 0x03, 0x01, 0x90, 0x02];
+        assert!(matches!(
+            decode_write_multiple_response(&req, &err_frame),
+            Err(DriverError::Device { code: 2, .. })
+        ));
     }
 }

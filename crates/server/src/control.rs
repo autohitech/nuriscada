@@ -582,6 +582,67 @@ pub(super) async fn import_project(
     })))
 }
 
+/// 값 JSON을 장치 원시값(u16)으로 바꾼다. 종류가 맞지 않으면 `None`이다.
+fn raw_value(space: Space, value: &Value) -> Option<u16> {
+    match space {
+        Space::Coil
+        | Space::MelsecM
+        | Space::MelsecX
+        | Space::MelsecY
+        | Space::XgtMx
+        | Space::FinsCio
+        | Space::S7M => value.as_bool().map(u16::from),
+        Space::Holding
+        | Space::MelsecD
+        | Space::MelsecW
+        | Space::MelsecR
+        | Space::XgtMw
+        | Space::FinsDm
+        | Space::S7Db => value.as_u64().and_then(|v| u16::try_from(v).ok()),
+        _ => None,
+    }
+}
+
+/// 단일 쓰기를 장치에 보낸다.
+async fn execute_single(
+    device: &nuriscada_project::Device,
+    tag: &nuriscada_project::Tag,
+    raw: u16,
+) -> std::result::Result<(), nuriscada_driver_api::DriverError> {
+    match &device.driver {
+        DriverConfig::ModbusTcp { address } => {
+            let mut driver = ModbusTcpClient::new(address.clone(), device.timeout);
+            driver
+                .write_single(tag.unit, tag.space.code(), tag.address, raw)
+                .await
+        }
+        DriverConfig::MelsecMc { address } => {
+            let mut driver = MelsecMcClient::new(address.clone(), device.timeout);
+            driver
+                .write_single(tag.unit, tag.space.code(), tag.address, raw)
+                .await
+        }
+        DriverConfig::XgtFenet { address } => {
+            let mut driver = XgtFenetClient::new(address.clone(), device.timeout);
+            driver
+                .write_single(tag.unit, tag.space.code(), tag.address, raw)
+                .await
+        }
+        DriverConfig::FinsTcp { address } => {
+            let mut driver = FinsTcpClient::new(address.clone(), device.timeout);
+            driver
+                .write_single(tag.unit, tag.space.code(), tag.address, raw)
+                .await
+        }
+        DriverConfig::S7Tcp { address } => {
+            let mut driver = S7Client::new(address.clone(), device.timeout);
+            driver
+                .write_single(tag.unit, tag.space.code(), tag.address, raw)
+                .await
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct WriteValue {
@@ -636,24 +697,8 @@ pub(super) async fn write_tag(
         .find(|t| t.name == name && t.writable)
         .cloned()
         .ok_or_else(|| error(StatusCode::NOT_FOUND, Code::WriteTagNotWritable))?;
-    let raw = match tag.space {
-        Space::Coil
-        | Space::MelsecM
-        | Space::MelsecX
-        | Space::MelsecY
-        | Space::XgtMx
-        | Space::FinsCio
-        | Space::S7M => input.value.as_bool().map(u16::from),
-        Space::Holding
-        | Space::MelsecD
-        | Space::MelsecW
-        | Space::MelsecR
-        | Space::XgtMw
-        | Space::FinsDm
-        | Space::S7Db => input.value.as_u64().and_then(|v| u16::try_from(v).ok()),
-        _ => None,
-    }
-    .ok_or_else(|| error(StatusCode::BAD_REQUEST, Code::WriteBadValue))?;
+    let raw = raw_value(tag.space, &input.value)
+        .ok_or_else(|| error(StatusCode::BAD_REQUEST, Code::WriteBadValue))?;
     let current = state
         .hub
         .tags()
@@ -672,38 +717,7 @@ pub(super) async fn write_tag(
     blocking(move||db.audit(Event{actor:&actor,source:&source,action:"write.request",target:&target,
         detail:json!({"previous_display_value":old,"requested_raw_value":requested,"outcome":"pending"})})).await?;
     let device = &project.devices[tag.device];
-    let outcome = match &device.driver {
-        DriverConfig::ModbusTcp { address } => {
-            let mut driver = ModbusTcpClient::new(address.clone(), device.timeout);
-            driver
-                .write_single(tag.unit, tag.space.code(), tag.address, raw)
-                .await
-        }
-        DriverConfig::MelsecMc { address } => {
-            let mut driver = MelsecMcClient::new(address.clone(), device.timeout);
-            driver
-                .write_single(tag.unit, tag.space.code(), tag.address, raw)
-                .await
-        }
-        DriverConfig::XgtFenet { address } => {
-            let mut driver = XgtFenetClient::new(address.clone(), device.timeout);
-            driver
-                .write_single(tag.unit, tag.space.code(), tag.address, raw)
-                .await
-        }
-        DriverConfig::FinsTcp { address } => {
-            let mut driver = FinsTcpClient::new(address.clone(), device.timeout);
-            driver
-                .write_single(tag.unit, tag.space.code(), tag.address, raw)
-                .await
-        }
-        DriverConfig::S7Tcp { address } => {
-            let mut driver = S7Client::new(address.clone(), device.timeout);
-            driver
-                .write_single(tag.unit, tag.space.code(), tag.address, raw)
-                .await
-        }
-    };
+    let outcome = execute_single(device, &tag, raw).await;
     let detail = match &outcome {
         Ok(()) => json!({"requested_raw_value":input.value,"outcome":"device_acknowledged"}),
         Err(e) => {
@@ -731,4 +745,381 @@ pub(super) async fn write_tag(
     Ok(Json(
         json!({"ok":true,"outcome":"device_acknowledged","readback":"다음 스캔으로 확인"}),
     ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct BatchWriteItem {
+    name: String,
+    value: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct BatchWrite {
+    writes: Vec<BatchWriteItem>,
+}
+
+/// 감사에 제어 결과를 남긴다.
+async fn audit_write(
+    ops: &Arc<Operations>,
+    actor: String,
+    source: String,
+    action: &str,
+    target: String,
+    detail: Value,
+) -> Result<()> {
+    let db = ops.clone();
+    let action = action.to_string();
+    blocking(move || {
+        db.audit(Event {
+            actor: &actor,
+            source: &source,
+            action: &action,
+            target: &target,
+            detail,
+        })
+    })
+    .await?;
+    Ok(())
+}
+
+/// 배치 한 항목의 실행 준비 상태.
+struct Ready {
+    index: usize,
+    tag: nuriscada_project::Tag,
+    raw: u16,
+    requested: Value,
+}
+
+/// 배치 실행 한 걸음. `Multi`의 위치들은 `ready` 안의 연속 묶음이다.
+#[derive(Debug, PartialEq)]
+enum BatchStep {
+    Single(usize),
+    Multi(Vec<usize>),
+}
+
+/// 배치 묶음 계획. MODBUS 코일·보유 레지스터의 같은 장치·유닛·연속 주소만 묶고,
+/// 상한을 넘기면 나눈다. 순서는 바꾸지 않는다.
+fn plan_batch_steps(devices: &[nuriscada_project::Device], ready: &[Ready]) -> Vec<BatchStep> {
+    use nuriscada_driver_modbus_tcp::protocol::{MAX_WRITE_COILS, MAX_WRITE_REGISTERS};
+    let mut steps = Vec::new();
+    let mut i = 0;
+    while i < ready.len() {
+        let first = &ready[i];
+        let batchable = matches!(
+            &devices[first.tag.device].driver,
+            DriverConfig::ModbusTcp { .. }
+        ) && matches!(first.tag.space, Space::Coil | Space::Holding);
+        let mut j = i + 1;
+        if batchable {
+            let cap = if matches!(first.tag.space, Space::Coil) {
+                MAX_WRITE_COILS
+            } else {
+                MAX_WRITE_REGISTERS
+            };
+            while j < ready.len() {
+                let next = &ready[j];
+                if next.tag.device != first.tag.device
+                    || next.tag.unit != first.tag.unit
+                    || next.tag.space != first.tag.space
+                    || next.tag.address != ready[j - 1].tag.address + 1
+                    || j - i >= cap
+                {
+                    break;
+                }
+                j += 1;
+            }
+        }
+        if j - i > 1 {
+            steps.push(BatchStep::Multi((i..j).collect()));
+        } else {
+            steps.push(BatchStep::Single(i));
+        }
+        i = j;
+    }
+    steps
+}
+
+/// 한 항목의 실행 결과를 감사에 남기고 결과 칸을 채운다.
+async fn finish_write(
+    ops: &Arc<Operations>,
+    actor: &str,
+    source: &str,
+    r: &Ready,
+    outcome: &std::result::Result<(), nuriscada_driver_api::DriverError>,
+    results: &mut [Value],
+) -> Result<()> {
+    let detail = match outcome {
+        Ok(()) => json!({"requested_raw_value":r.requested,"outcome":"device_acknowledged"}),
+        Err(e) => {
+            json!({"requested_raw_value":r.requested,"outcome":"failed_or_unknown","error":e.to_string()})
+        }
+    };
+    audit_write(
+        ops,
+        actor.to_string(),
+        source.to_string(),
+        "write.result",
+        r.tag.name.clone(),
+        detail,
+    )
+    .await?;
+    results[r.index] = match outcome {
+        Ok(()) => json!({"name":r.tag.name,"outcome":"device_acknowledged"}),
+        Err(e) => json!({"name":r.tag.name,"outcome":"failed_or_unknown","error":e.to_string()}),
+    };
+    Ok(())
+}
+
+/// 여러 태그를 한 요청으로 쓴다. 원자적이지 않다: 항목마다 결과를 돌려준다.
+/// MODBUS 코일·보유 레지스터는 같은 장치·유닛의 연속 주소를 한 번에 보내고(15·16),
+/// 나머지는 단일 쓰기로 보낸다. 같은 태그가 두 번 나오면 순서대로 두 번 쓴다.
+pub(super) async fn write_batch(
+    State(state): State<AppState>,
+    Extension(user): Extension<Principal>,
+    Extension(peer): Extension<Peer>,
+    headers: HeaderMap,
+    Json(input): Json<BatchWrite>,
+) -> Result<Json<Value>> {
+    let ops = operations(&state)?;
+    if input.writes.is_empty() || input.writes.len() > 64 {
+        return Err(error(StatusCode::BAD_REQUEST, Code::InputTooLong));
+    }
+    if user.role == Role::Viewer
+        || !ops.writes_enabled
+        || !peer.loopback
+        || state.guard.allowed_hosts.is_none()
+    {
+        for w in &input.writes {
+            audit_write(
+                &ops,
+                user.username.clone(),
+                peer.source.clone(),
+                "write.denied",
+                w.name.clone(),
+                json!({"requested":w.value}),
+            )
+            .await?;
+        }
+        return Err(error(StatusCode::FORBIDDEN, Code::WriteNotAllowed));
+    }
+    let _slot = ops
+        .write_slots
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| error(StatusCode::TOO_MANY_REQUESTS, Code::WriteQueueFull))?;
+    let _lock = ops.write_lock.lock().await;
+    let check = ops.clone();
+    let t = token(&headers).unwrap_or_default();
+    if blocking(move || check.authenticate(&t)).await?.is_none() || user.expires_ms <= now_ms() {
+        return Err(error(StatusCode::UNAUTHORIZED, Code::SessionExpired));
+    }
+    let project = ops.project();
+    let hub_tags = state.hub.tags();
+    // 1단계: 항목별 검증·품질 확인·요청 감사.
+    let mut results: Vec<Value> = Vec::with_capacity(input.writes.len());
+    let mut ready: Vec<Ready> = Vec::new();
+    for (index, w) in input.writes.iter().enumerate() {
+        let Some(tag) = project
+            .tags
+            .iter()
+            .find(|t| t.name == w.name && t.writable)
+            .cloned()
+        else {
+            results.push(json!({"name":w.name,"outcome":"not_writable"}));
+            continue;
+        };
+        let Some(raw) = raw_value(tag.space, &w.value) else {
+            results.push(json!({"name":w.name,"outcome":"bad_value"}));
+            continue;
+        };
+        let Some(current) = hub_tags.iter().find(|t| t.name == w.name) else {
+            results.push(json!({"name":w.name,"outcome":"not_found"}));
+            continue;
+        };
+        if current.quality != Quality::Good {
+            results.push(json!({"name":w.name,"outcome":"bad_quality"}));
+            continue;
+        }
+        let old = serde_json::to_value(current.value.clone()).map_err(internal)?;
+        audit_write(
+            &ops,
+            user.username.clone(),
+            peer.source.clone(),
+            "write.request",
+            w.name.clone(),
+            json!({"previous_display_value":old,"requested_raw_value":w.value,"outcome":"pending"}),
+        )
+        .await?;
+        results.push(Value::Null);
+        ready.push(Ready {
+            index,
+            tag,
+            raw,
+            requested: w.value.clone(),
+        });
+    }
+    // 2단계: MODBUS 연속 묶음과 단일 쓰기를 순서대로 보낸다.
+    for step in plan_batch_steps(&project.devices, &ready) {
+        match step {
+            BatchStep::Single(pos) => {
+                let r = &ready[pos];
+                let device = &project.devices[r.tag.device];
+                let outcome = execute_single(device, &r.tag, r.raw).await;
+                finish_write(
+                    &ops,
+                    &user.username,
+                    &peer.source,
+                    r,
+                    &outcome,
+                    &mut results,
+                )
+                .await?;
+            }
+            BatchStep::Multi(positions) => {
+                let first = &ready[positions[0]];
+                let device = &project.devices[first.tag.device];
+                let address = match &device.driver {
+                    DriverConfig::ModbusTcp { address } => address.clone(),
+                    _ => unreachable!("묶음은 MODBUS 장치만 쓴다"),
+                };
+                let mut driver = ModbusTcpClient::new(address, device.timeout);
+                let outcome = match first.tag.space {
+                    Space::Coil => {
+                        let bits: Vec<bool> =
+                            positions.iter().map(|&p| ready[p].raw == 1).collect();
+                        driver
+                            .write_multiple(
+                                first.tag.unit,
+                                Space::Coil.code(),
+                                first.tag.address,
+                                &bits,
+                                &[],
+                            )
+                            .await
+                    }
+                    _ => {
+                        let words: Vec<u16> = positions.iter().map(|&p| ready[p].raw).collect();
+                        driver
+                            .write_multiple(
+                                first.tag.unit,
+                                Space::Holding.code(),
+                                first.tag.address,
+                                &[],
+                                &words,
+                            )
+                            .await
+                    }
+                };
+                for pos in positions {
+                    let r = &ready[pos];
+                    finish_write(
+                        &ops,
+                        &user.username,
+                        &peer.source,
+                        r,
+                        &outcome,
+                        &mut results,
+                    )
+                    .await?;
+                }
+            }
+        }
+    }
+    let ok = results
+        .iter()
+        .all(|r| r.get("outcome").and_then(|o| o.as_str()) == Some("device_acknowledged"));
+    Ok(Json(json!({"ok":ok,"results":results})))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nuriscada_project::{Device, Tag, TagBody};
+    use std::time::Duration;
+
+    fn device() -> Device {
+        Device {
+            name: "sim".to_string(),
+            driver: DriverConfig::ModbusTcp {
+                address: "127.0.0.1:502".to_string(),
+            },
+            timeout: Duration::from_millis(500),
+            scan: Duration::from_millis(100),
+        }
+    }
+
+    fn ready_tag(device: usize, space: Space, address: u16) -> Ready {
+        Ready {
+            index: 0,
+            tag: Tag {
+                writable: true,
+                name: String::new(),
+                device,
+                unit: 1,
+                space,
+                address,
+                body: TagBody::Digital { alarm_kind: None },
+            },
+            raw: 0,
+            requested: Value::Null,
+        }
+    }
+
+    #[test]
+    fn 연속된_modbus_주소는_묶고_나머지는_낱개로_둔다() {
+        let devices = vec![device()];
+        let ready = vec![
+            ready_tag(0, Space::Coil, 0),
+            ready_tag(0, Space::Coil, 1),
+            ready_tag(0, Space::Holding, 10),
+            ready_tag(0, Space::Holding, 12),
+            ready_tag(0, Space::Coil, 5),
+        ];
+        assert_eq!(
+            plan_batch_steps(&devices, &ready),
+            vec![
+                BatchStep::Multi(vec![0, 1]),
+                BatchStep::Single(2),
+                BatchStep::Single(3),
+                BatchStep::Single(4),
+            ]
+        );
+    }
+
+    #[test]
+    fn 다른_장치나_영역이_끼면_묶음이_끊긴다() {
+        let mut devices = vec![device(), device()];
+        devices[1].name = "other".to_string();
+        let ready = vec![
+            ready_tag(0, Space::Coil, 0),
+            ready_tag(1, Space::Coil, 1),
+            ready_tag(0, Space::Holding, 0),
+        ];
+        assert_eq!(
+            plan_batch_steps(&devices, &ready),
+            vec![
+                BatchStep::Single(0),
+                BatchStep::Single(1),
+                BatchStep::Single(2),
+            ]
+        );
+    }
+
+    #[test]
+    fn 상한을_넘기면_묶음을_나눈다() {
+        let devices = vec![device()];
+        let ready: Vec<Ready> = (0..130u16)
+            .map(|a| ready_tag(0, Space::Holding, a))
+            .collect();
+        // 보유 레지스터 상한 123개에서 끊긴다.
+        assert_eq!(
+            plan_batch_steps(&devices, &ready),
+            vec![
+                BatchStep::Multi((0..123).collect()),
+                BatchStep::Multi((123..130).collect()),
+            ]
+        );
+    }
 }
