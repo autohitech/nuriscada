@@ -20,6 +20,10 @@ use crate::protocol::{
 pub const SPACE_DM: u16 = 40;
 /// CIO 비트 영역 번호(비트 번호 = 워드×16 + 비트).
 pub const SPACE_CIO: u16 = 41;
+/// WR 비트 영역 번호(비트 번호 = 워드×16 + 비트).
+pub const SPACE_WR: u16 = 42;
+/// HR 비트 영역 번호(비트 번호 = 워드×16 + 비트).
+pub const SPACE_HR: u16 = 43;
 
 /// FINS/TCP 클라이언트. 연결할 때 노드 주소 교환을 수행하고 노드를 캐시한다.
 ///
@@ -207,15 +211,26 @@ impl Driver for FinsTcpClient {
                     count: block.count,
                 }
             }
-            SPACE_CIO => {
+            SPACE_CIO | SPACE_WR | SPACE_HR => {
                 if block.kind != nuriscada_driver_api::DataKind::Bit {
                     return Err(DriverError::InvalidRequest(
-                        "CIO 영역은 비트 종류이어야 한다".into(),
+                        "CIO·WR·HR 영역은 비트 종류이어야 한다".into(),
                     ));
                 }
-                ReadRequest::CioBits {
-                    start_bit: u32::from(block.start),
-                    count: block.count,
+                let start_bit = u32::from(block.start);
+                match block.space {
+                    SPACE_CIO => ReadRequest::CioBits {
+                        start_bit,
+                        count: block.count,
+                    },
+                    SPACE_WR => ReadRequest::WrBits {
+                        start_bit,
+                        count: block.count,
+                    },
+                    _ => ReadRequest::HrBits {
+                        start_bit,
+                        count: block.count,
+                    },
                 }
             }
             _ => {

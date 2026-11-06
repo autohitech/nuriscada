@@ -393,6 +393,8 @@
                       <option value="y">y</option>
                       <option value="mx">mx</option>
                       <option value="cio">cio</option>
+                      <option value="wr">wr</option>
+                      <option value="hr">hr</option>
                       <option value="s7m">s7m</option>
                     {/if}
                   </select></label>

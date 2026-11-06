@@ -134,6 +134,10 @@ pub enum Space {
     FinsDm,
     /// CIO 비트(FINS, 비트 번호 = 워드×16 + 비트).
     FinsCio,
+    /// WR 비트(FINS, 비트 번호 = 워드×16 + 비트).
+    FinsWr,
+    /// HR 비트(FINS, 비트 번호 = 워드×16 + 비트).
+    FinsHr,
     /// DB 워드(S7, DB 번호 = unit, 바이트 주소).
     S7Db,
     /// M 비트(S7, 비트 번호 = 바이트×8 + 비트).
@@ -151,6 +155,8 @@ impl Space {
             | Self::MelsecY
             | Self::XgtMx
             | Self::FinsCio
+            | Self::FinsWr
+            | Self::FinsHr
             | Self::S7M => DataKind::Bit,
             Self::Holding
             | Self::Input
@@ -164,7 +170,7 @@ impl Space {
     }
 
     /// 드라이버 인터페이스의 영역 번호(MODBUS 0~3, MELSEC 10·11·12 워드·20·21·22 비트,
-    /// XGT 30·31, FINS 40·41, S7 50·51).
+    /// XGT 30·31, FINS 40·43, S7 50·51).
     pub fn code(self) -> u16 {
         match self {
             Self::Coil => 0,
@@ -181,6 +187,8 @@ impl Space {
             Self::XgtMx => 31,
             Self::FinsDm => 40,
             Self::FinsCio => 41,
+            Self::FinsWr => 42,
+            Self::FinsHr => 43,
             Self::S7Db => 50,
             Self::S7M => 51,
         }
@@ -203,6 +211,8 @@ impl Space {
             Self::XgtMx => "mx",
             Self::FinsDm => "dm",
             Self::FinsCio => "cio",
+            Self::FinsWr => "wr",
+            Self::FinsHr => "hr",
             Self::S7Db => "s7db",
             Self::S7M => "s7m",
         }
@@ -215,7 +225,10 @@ impl Space {
 
     /// FINS 장치의 영역인가.
     pub fn is_fins(self) -> bool {
-        matches!(self, Self::FinsDm | Self::FinsCio)
+        matches!(
+            self,
+            Self::FinsDm | Self::FinsCio | Self::FinsWr | Self::FinsHr
+        )
     }
 
     /// S7 장치의 영역인가.
@@ -551,10 +564,12 @@ fn parse_space(s: &str) -> Result<Space, ConfigError> {
         "mx" => Ok(Space::XgtMx),
         "dm" => Ok(Space::FinsDm),
         "cio" => Ok(Space::FinsCio),
+        "wr" => Ok(Space::FinsWr),
+        "hr" => Ok(Space::FinsHr),
         "s7db" => Ok(Space::S7Db),
         "s7m" => Ok(Space::S7M),
         other => invalid(format!(
-            "알 수 없는 영역 `{other}` (coil, discrete, holding, input, d, w, r, m, x, y, mw, mx, dm, cio, s7db, s7m 중 하나)"
+            "알 수 없는 영역 `{other}` (coil, discrete, holding, input, d, w, r, m, x, y, mw, mx, dm, cio, wr, hr, s7db, s7m 중 하나)"
         )),
     }
 }
