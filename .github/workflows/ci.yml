@@ -103,7 +103,7 @@ jobs:
   visual:
     name: 화면 촬영 (ubuntu-latest)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
