@@ -320,13 +320,14 @@ fn fins_장치의_쓰기와_영역_혼용을_검사한다() {
 }
 
 #[test]
-fn fins_wr_hr_읽기를_받아들인다() {
+fn fins_wr_hr_ar_읽기를_받아들인다() {
     let tags = format!(
-        "{FINS}\n[[tag]]\nname = \"W\"\ndevice = \"omron1\"\nspace = \"wr\"\naddress = 19\ntype = \"digital\"\n\n[[tag]]\nname = \"H\"\ndevice = \"omron1\"\nspace = \"hr\"\naddress = 32\ntype = \"digital\"\n"
+        "{FINS}\n[[tag]]\nname = \"W\"\ndevice = \"omron1\"\nspace = \"wr\"\naddress = 19\ntype = \"digital\"\n\n[[tag]]\nname = \"H\"\ndevice = \"omron1\"\nspace = \"hr\"\naddress = 32\ntype = \"digital\"\n\n[[tag]]\nname = \"A\"\ndevice = \"omron1\"\nspace = \"ar\"\naddress = 67\ntype = \"digital\"\n"
     );
     let p = Project::from_toml(&tags).unwrap();
     assert_eq!(p.tags[2].space, Space::FinsWr);
     assert_eq!(p.tags[3].space, Space::FinsHr);
+    assert_eq!(p.tags[4].space, Space::FinsAr);
     let reparsed = Project::from_toml(&p.to_toml()).unwrap();
     assert_eq!(p, reparsed);
 }

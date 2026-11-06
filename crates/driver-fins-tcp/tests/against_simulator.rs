@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use nuriscada_driver_api::{BlockData, DataKind, Driver, DriverError, LinkState, ReadBlock};
-use nuriscada_driver_fins_tcp::{FinsTcpClient, SPACE_CIO, SPACE_DM, SPACE_HR, SPACE_WR};
+use nuriscada_driver_fins_tcp::{FinsTcpClient, SPACE_AR, SPACE_CIO, SPACE_DM, SPACE_HR, SPACE_WR};
 use nuriscada_sim_fins::Simulator;
 
 fn block(space: u16, start: u16, count: u16, kind: DataKind) -> ReadBlock {
@@ -256,4 +256,18 @@ async fn wr_쓰기_후_읽힌다() {
         BlockData::Bits(vec![false])
     );
     assert_eq!(sim.state().wr[2] & 0x0008, 0);
+}
+
+#[tokio::test]
+async fn ar_비트를_읽는다() {
+    let (sim, mut client) = setup().await;
+    // AR 4.03: 비트 번호 67.
+    sim.set_ar(4, &[0x0008]);
+    assert_eq!(
+        client
+            .read(&block(SPACE_AR, 67, 1, DataKind::Bit))
+            .await
+            .unwrap(),
+        BlockData::Bits(vec![true])
+    );
 }
