@@ -82,6 +82,7 @@
 
   async function loadProject() {
     const res = await request("project") as { project: ProjectSpec; toml: string };
+    for (const t of res.project.tag) t.interlock ??= [];
     projectSpec = res.project;
     projectToml = res.toml;
   }
@@ -114,6 +115,7 @@
       value: null,
       length: null,
       swap_bytes: false,
+      interlock: [],
       scale: { plc_base: 0, plc_full: 100, base: 0, full: 100, profile: 0, delay: 0, range: 0 },
       alarm: null,
     };
@@ -458,6 +460,29 @@
                     {:else}
                       <label>{m.digitalAlarmKind} <input type="number" min="0" max="3" bind:value={tag.alarm.kind} /></label>
                     {/if}
+                  </div>
+                {/if}
+                {#if tag.writable}
+                  <div class="inline sub-row">
+                    <span>{m.interlockConds}</span>
+                    {#each tag.interlock as cond, ci (ci)}
+                      <select bind:value={cond.tag}>
+                        {#each (projectSpec?.tag ?? []).filter((t2) => t2.name !== tag.name) as cand (cand.name)}
+                          <option value={cand.name}>{cand.name}</option>
+                        {/each}
+                      </select>
+                      <select value={typeof cond.value === "boolean" ? "bool" : "num"} onchange={(e) => { const k = (e.currentTarget as HTMLSelectElement).value; cond.value = k === "bool" ? false : 0; tag.interlock = [...tag.interlock]; }}>
+                        <option value="bool">{m.condBool}</option>
+                        <option value="num">{m.condNum}</option>
+                      </select>
+                      {#if typeof cond.value === "boolean"}
+                        <input type="checkbox" bind:checked={cond.value} />
+                      {:else}
+                        <input type="number" step="1" value={cond.value} onchange={(e) => { cond.value = Number((e.currentTarget as HTMLInputElement).value); tag.interlock = [...tag.interlock]; }} />
+                      {/if}
+                      <button type="button" disabled={busy} onclick={() => { tag.interlock = tag.interlock.filter((_, j) => j !== ci); }}>{m.removeCond}</button>
+                    {/each}
+                    <button type="button" disabled={busy} onclick={() => { const first = (projectSpec?.tag ?? []).find((t2) => t2.name !== tag.name); if (first) tag.interlock = [...tag.interlock, { tag: first.name, value: false }]; }}>{m.addRow}</button>
                   </div>
                 {/if}
               </div>

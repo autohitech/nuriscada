@@ -128,6 +128,7 @@ export interface TagSpec {
   value: string | null;
   length: number | null;
   swap_bytes: boolean;
+  interlock: { tag: string; value: boolean | number }[];
 }
 
 export type GraphicWidgetKind = "value" | "gauge" | "tank" | "lamp" | "pump" | "valve" | "label";

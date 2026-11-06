@@ -94,6 +94,7 @@ export const en: Messages = {
     "write.bad_value": "Enter true/false for coils or a raw integer from 0 to 65535 for registers.",
     "tag.not_found": "The tag was not found.",
     "write.bad_quality": "You cannot write to a tag with bad communication quality.",
+    "write.interlocked": "The interlock condition is not met, so writing is not allowed.",
     "write.unconfirmed": "The write result could not be confirmed (it is not retried automatically).",
     "request.host_not_allowed": "The host address is not allowed.",
     "request.origin_not_allowed": "The request origin is not allowed.",
@@ -131,6 +132,7 @@ export const en: Messages = {
       bad_value: "Bad value",
       bad_quality: "Bad quality",
       not_found: "Tag not found",
+      interlocked: "Interlock condition not met",
     };
     return text[outcome] ?? outcome;
   },
@@ -180,6 +182,10 @@ export const en: Messages = {
   swapBytes: "Swap bytes",
   useAlarm: "Use alarm",
   removeTag: "Remove tag",
+  interlockConds: "Write allow conditions (AND)",
+  condBool: "true/false",
+  condNum: "number",
+  removeCond: "Remove condition",
   plcBase: "PLC low",
   plcFull: "PLC high",
   dispBase: "Display low",

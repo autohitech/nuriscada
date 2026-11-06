@@ -95,6 +95,7 @@ export const ko = {
     "write.bad_value": "코일은 true/false, 레지스터는 원시 정수 0~65535를 입력하세요.",
     "tag.not_found": "태그를 찾을 수 없습니다.",
     "write.bad_quality": "통신 품질이 나쁜 태그에는 쓸 수 없습니다.",
+    "write.interlocked": "인터록 조건을 만족하지 않아 쓸 수 없습니다.",
     "write.unconfirmed": "쓰기 결과를 확인하지 못했습니다(자동으로 다시 보내지 않습니다).",
     "request.host_not_allowed": "허용되지 않은 호스트 주소입니다.",
     "request.origin_not_allowed": "허용되지 않은 출처의 요청입니다.",
@@ -134,6 +135,7 @@ export const ko = {
       bad_value: "잘못된 값",
       bad_quality: "통신 품질 불량",
     not_found: "태그 없음",
+    interlocked: "인터록 조건 불충족",
     };
     return text[outcome] ?? outcome;
   },
@@ -183,6 +185,10 @@ export const ko = {
   swapBytes: "바이트 순서 뒤집기",
   useAlarm: "알람 사용",
   removeTag: "태그 삭제",
+  interlockConds: "쓰기 허용 조건(AND)",
+  condBool: "참/거짓",
+  condNum: "숫자",
+  removeCond: "조건 삭제",
   plcBase: "PLC 하한",
   plcFull: "PLC 상한",
   dispBase: "표시 하한",
