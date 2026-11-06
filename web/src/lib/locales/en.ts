@@ -123,6 +123,17 @@ export const en: Messages = {
   addRow: "Add row",
   batchDone: "All writes acknowledged.",
   batchPartial: "Some writes were not acknowledged. See per-item outcomes.",
+  batchOutcome: (outcome: string) => {
+    const text: Record<string, string> = {
+      device_acknowledged: "Acknowledged",
+      failed_or_unknown: "Failed or unknown",
+      not_writable: "Not writable",
+      bad_value: "Bad value",
+      bad_quality: "Bad quality",
+      not_found: "Tag not found",
+    };
+    return text[outcome] ?? outcome;
+  },
   confirmWrite: "Confirm and write",
   cancel: "Cancel",
   currentlyReadOnly: "Currently read-only.",

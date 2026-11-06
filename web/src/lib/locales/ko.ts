@@ -126,6 +126,17 @@ export const ko = {
   addRow: "행 추가",
   batchDone: "모두 장치 응답을 확인했습니다.",
   batchPartial: "일부 쓰기가 확인되지 않았습니다. 항목별 결과를 보세요.",
+  batchOutcome: (outcome: string) => {
+    const text: Record<string, string> = {
+      device_acknowledged: "장치 응답 확인",
+      failed_or_unknown: "실패 또는 미확인",
+      not_writable: "쓰기 불가 태그",
+      bad_value: "잘못된 값",
+      bad_quality: "통신 품질 불량",
+    not_found: "태그 없음",
+    };
+    return text[outcome] ?? outcome;
+  },
   confirmWrite: "확인 후 쓰기",
   cancel: "취소",
   currentlyReadOnly: "현재 읽기 전용입니다.",
