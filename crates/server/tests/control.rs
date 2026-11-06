@@ -1733,3 +1733,16 @@ async fn 진단_번들은_로컬_관리자만_받는다() {
         "{body}"
     );
 }
+
+#[tokio::test]
+async fn 실수가_섞인_쓰기는_반올림하지_않고_거부한다() {
+    // 설계 0007 §6: 쓰기는 원시 정수만 보내고 float 전달·반올림을 하지 않는다.
+    let st = start(true, false).await;
+    let cookie = login(&st, "operator").await;
+    let hdr = "X-NuriScada-Request: 1\r\n";
+    for body in [json!({"value": 1.5}), json!({"value": 70000}), json!({"value": -1})] {
+        let (code, _, resp) = request(st.addr, "POST", "/api/v1/control/tags/LEVEL", &cookie, body, hdr).await;
+        assert_eq!(code, 400, "{resp}");
+        assert_eq!(resp["code"], "write.bad_value");
+    }
+}
