@@ -7,6 +7,7 @@
 
 pub mod client;
 pub mod protocol;
+pub mod rtu;
 
 pub use client::{
     ModbusTcpClient, SPACE_COILS, SPACE_DISCRETE_INPUTS, SPACE_HOLDING_REGISTERS,
