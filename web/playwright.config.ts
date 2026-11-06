@@ -7,7 +7,7 @@ import { defineConfig, devices } from "@playwright/test";
 // baseURL은 환경 변수 PLAYWRIGHT_BASE_URL로 덮을 수 있다.
 export default defineConfig({
   testDir: "./tests",
-  snapshotPathTemplate: "{testDir}/__screenshots__/{projectName}/{arg}{ext}",
+  snapshotPathTemplate: "{testDir}/__screenshots__/{projectName}-{platform}/{arg}{ext}",
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:18080",
     trace: "retain-on-failure",
