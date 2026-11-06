@@ -405,7 +405,7 @@
     if (isSelected) return "var(--accent, #4ea1ff)";
     if (!tag) return "var(--border)";
     if (tag.quality === "bad") return "var(--warn, #e5a100)";
-    if (tag.alarm_state && tag.alarm_state !== "NORMAL") return "var(--danger, #ff5d5d)";
+    if (tag.alarm_state && tag.alarm_state !== "NORMAL") return "var(--critical)";
     return "var(--border)";
   }
 
@@ -539,7 +539,7 @@
                 fill={tag.quality === "bad"
                   ? "var(--warn, #e5a100)"
                   : tag.alarm_state && tag.alarm_state !== "NORMAL"
-                    ? "var(--danger, #ff5d5d)"
+                    ? "var(--critical)"
                     : "var(--muted)"}
                 font-size="10"
               >
@@ -570,7 +570,7 @@
                 height={Math.max(0, fillH - 2)}
                 rx="6"
                 fill={tag?.alarm_state && tag.alarm_state !== "NORMAL"
-                  ? "var(--danger, #ff5d5d)"
+                  ? "var(--critical)"
                   : "var(--accent, #3b82f6)"}
                 fill-opacity="0.75"
               />
@@ -605,7 +605,7 @@
                 height="16"
                 rx="8"
                 fill={tag?.alarm_state && tag.alarm_state !== "NORMAL"
-                  ? "var(--danger, #ff5d5d)"
+                  ? "var(--critical)"
                   : "var(--ok, #22c55e)"}
               />
               <text
@@ -837,8 +837,8 @@
     font-weight: 600;
   }
   button.danger-btn {
-    border-color: var(--danger, #ff5d5d);
-    color: var(--danger, #ff5d5d);
+    border-color: var(--critical);
+    color: var(--critical);
   }
   .snap-toggle {
     display: inline-flex;
