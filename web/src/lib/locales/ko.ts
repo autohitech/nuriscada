@@ -122,6 +122,10 @@ export const ko = {
   writeConfirm: (name: string, value: string) =>
     `${name}에 ${value}을 씁니다. 레지스터 값은 환산 전 원시 값입니다.`,
   writeDone: "장치 응답을 확인했습니다. 표시값은 다음 스캔에서 갱신됩니다.",
+  batchWrite: "묶음 쓰기",
+  addRow: "행 추가",
+  batchDone: "모두 장치 응답을 확인했습니다.",
+  batchPartial: "일부 쓰기가 확인되지 않았습니다. 항목별 결과를 보세요.",
   confirmWrite: "확인 후 쓰기",
   cancel: "취소",
   currentlyReadOnly: "현재 읽기 전용입니다.",
