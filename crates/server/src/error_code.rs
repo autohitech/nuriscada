@@ -75,6 +75,8 @@ pub enum Code {
     WriteBadQuality,
     /// 쓰기 결과를 확인하지 못했다(`detail`에 이유).
     WriteUnconfirmed,
+    /// 인터록 조건을 만족하지 않아 쓸 수 없다(`detail`에 조건).
+    WriteInterlocked,
     /// 허용되지 않은 Host.
     HostNotAllowed,
     /// 허용되지 않은 Origin.
@@ -113,6 +115,7 @@ impl Code {
         Code::TagNotFound,
         Code::WriteBadQuality,
         Code::WriteUnconfirmed,
+        Code::WriteInterlocked,
         Code::HostNotAllowed,
         Code::OriginNotAllowed,
     ];
@@ -149,6 +152,7 @@ impl Code {
             Self::TagNotFound => "tag.not_found",
             Self::WriteBadQuality => "write.bad_quality",
             Self::WriteUnconfirmed => "write.unconfirmed",
+            Self::WriteInterlocked => "write.interlocked",
             Self::HostNotAllowed => "request.host_not_allowed",
             Self::OriginNotAllowed => "request.origin_not_allowed",
         }
@@ -188,6 +192,7 @@ impl Code {
             Self::TagNotFound => "태그가 없다",
             Self::WriteBadQuality => "통신 품질이 나쁜 태그에는 쓸 수 없다",
             Self::WriteUnconfirmed => "쓰기 결과를 확인하지 못했다(자동 재시도 없음)",
+            Self::WriteInterlocked => "인터록 조건을 만족하지 않아 쓸 수 없다",
             Self::HostNotAllowed => "허용되지 않은 Host",
             Self::OriginNotAllowed => "허용되지 않은 Origin",
         }
