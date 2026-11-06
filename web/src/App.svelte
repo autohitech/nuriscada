@@ -75,6 +75,7 @@
 <div class="app">
   <a class="skip-link" href="#main-content">{m.skipToContent}</a>
   {#if canRead}<StatusBar {store} {theme} onTheme={nextTheme} />{:else}<header class="welcome">NuriScada</header>{/if}
+  <OperationsPanel onSession={(s) => session = s} />
   {#if canRead}<main id="main-content">
     <div class="workspace-col">
       <div class="view-mode-bar" role="toolbar" aria-label={m.viewModeAria}>
