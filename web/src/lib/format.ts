@@ -96,6 +96,13 @@ export function isActive(value: boolean | number | string | null): boolean {
   return false;
 }
 
+/** 회전 각도(도). 숫자는 그대로(360으로 나눈 나머지), 참은 90도다. 통신 불량이면 0도다. */
+export function rotationDegrees(value: boolean | number | string | null, quality: "good" | "bad"): number {
+  if (quality !== "good") return 0;
+  if (typeof value === "number") return ((value % 360) + 360) % 360;
+  if (value === true) return 90;
+  return 0;
+}
 /** RFC 4180 인용 규칙으로 한 셀을 감싼다. */
 export function csvCell(text: string): string {
   if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;

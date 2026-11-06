@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { csvCell, fillRatio, formatImportCsv, isActive, isVisible, shouldBeep } from "./format";
+import { csvCell, fillRatio, formatImportCsv, isActive, isVisible, rotationDegrees, shouldBeep } from "./format";
 import type { ImportReport } from "./types";
 
 const report = (over: Partial<ImportReport> = {}): ImportReport => ({
@@ -94,5 +94,18 @@ describe("widget geometry", () => {
     expect(isActive(0)).toBe(false);
     expect(isActive(null)).toBe(false);
     expect(isActive("on")).toBe(false);
+  });
+});
+
+describe("rotationDegrees", () => {
+  it("maps values to degrees", () => {
+    expect(rotationDegrees(45, "good")).toBe(45);
+    expect(rotationDegrees(400, "good")).toBe(40);
+    expect(rotationDegrees(-90, "good")).toBe(270);
+    expect(rotationDegrees(true, "good")).toBe(90);
+    expect(rotationDegrees(false, "good")).toBe(0);
+    expect(rotationDegrees("x", "good")).toBe(0);
+    expect(rotationDegrees(null, "good")).toBe(0);
+    expect(rotationDegrees(45, "bad")).toBe(0);
   });
 });

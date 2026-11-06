@@ -4,7 +4,7 @@
   import { m } from "../lib/i18n.svelte";
   import { apiErrorMessage } from "../lib/api";
   import { onMount } from "svelte";
-  import { fillRatio, formatValue, isActive, isVisible } from "../lib/format";
+  import { fillRatio, formatValue, isActive, isVisible, rotationDegrees } from "../lib/format";
   import { UndoStack } from "../lib/undo-stack";
   import type { Store } from "../lib/store.svelte";
   import type {
@@ -123,6 +123,7 @@
         label: t.name,
         tag: t.name,
         visible_tag: null,
+      rotate_tag: null,
         x: 24 + col * 190,
         y: 24 + row * 150,
         width: 170,
@@ -165,7 +166,7 @@
       if (!res.ok) return;
       const data = (await res.json()) as { screens?: ScreenSpec[] };
       if (Array.isArray(data.screens)) {
-        for (const s of data.screens) for (const w of s.widget) w.visible_tag ??= null;
+        for (const s of data.screens) for (const w of s.widget) { w.visible_tag ??= null; w.rotate_tag ??= null; }
         screens = data.screens;
         if (activeIndex >= screens.length) activeIndex = 0;
         clearHistory();
@@ -266,6 +267,7 @@
       label: defaultTag ?? widgetKindLabel(kind),
       tag: defaultTag,
       visible_tag: null,
+      rotate_tag: null,
       x: col,
       y: row,
       width: kind === "label" ? 200 : 160,
@@ -317,6 +319,7 @@
           label: w.label,
           tag: w.tag && w.tag.trim() ? w.tag.trim() : null,
           visible_tag: w.visible_tag && w.visible_tag.trim() ? w.visible_tag.trim() : null,
+          rotate_tag: w.rotate_tag && w.rotate_tag.trim() ? w.rotate_tag.trim() : null,
           x: Number(w.x),
           y: Number(w.y),
           width: Number(w.width),
@@ -490,6 +493,8 @@
           {@const tag = w.tag ? tagByName.get(w.tag) : undefined}
           {@const vtag = w.visible_tag ? tagByName.get(w.visible_tag) : undefined}
           {@const shown = !w.visible_tag || (vtag !== undefined && isVisible(vtag.value, vtag.quality))}
+          {@const rtag = w.rotate_tag ? tagByName.get(w.rotate_tag) : undefined}
+          {@const deg = rtag === undefined ? 0 : rotationDegrees(rtag.value, rtag.quality)}
           {@const isSelected = editing && selectedWidgetId === w.id}
           {@const ratio = fillRatio(typeof tag?.value === "number" ? tag.value : null, w.min, w.max)}
           {@const active = isActive(tag?.value ?? null)}
@@ -501,7 +506,7 @@
             aria-label={w.label || w.tag || w.id}
             data-widget-id={w.id}
             data-widget-kind={w.kind}
-            transform={`translate(${w.x}, ${w.y})`}
+            transform={deg === 0 ? `translate(${w.x}, ${w.y})` : `translate(${w.x}, ${w.y}) rotate(${deg} ${w.width / 2} ${w.height / 2})`}
             display={!shown && !editing ? "none" : undefined}
             opacity={!shown && editing ? 0.35 : undefined}
             onpointerdown={(e) => onWidgetPointerDown(e, w)}
@@ -768,6 +773,15 @@
           <label>
             {m.visibilityTag}
             <select bind:value={selectedWidget.visible_tag}>
+              <option value={null}>{m.notLinked}</option>
+              {#each store.tags as t (t.name)}
+                <option value={t.name}>{t.name} ({t.kind})</option>
+              {/each}
+            </select>
+          </label>
+          <label>
+            {m.rotateTag}
+            <select bind:value={selectedWidget.rotate_tag}>
               <option value={null}>{m.notLinked}</option>
               {#each store.tags as t (t.name)}
                 <option value={t.name}>{t.name} ({t.kind})</option>

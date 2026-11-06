@@ -584,3 +584,34 @@ height = 120.0
     let bad = base.replace("kind = \"motor\"", "kind = \"robot\"");
     assert!(err(&bad).contains("지원하지 않는 kind"));
 }
+
+#[test]
+fn 위젯_회전_조건을_읽고_다시_쓴다() {
+    let base = format!(
+        r#"{GOOD}
+[[screen]]
+name = "s"
+width = 800
+height = 480
+
+[[screen.widget]]
+id = "m1"
+kind = "motor"
+tag = "PUMP_RUN"
+rotate_tag = "TANK_LEVEL"
+x = 10.0
+y = 10.0
+width = 160.0
+height = 120.0
+"#
+    );
+    let p = Project::from_toml(&base).unwrap();
+    assert_eq!(
+        p.screens[0].widgets[0].rotate_tag.as_deref(),
+        Some("TANK_LEVEL")
+    );
+    let reparsed = Project::from_toml(&p.to_toml()).unwrap();
+    assert_eq!(p, reparsed);
+    let bad = base.replace("rotate_tag = \"TANK_LEVEL\"", "rotate_tag = \"MISSING\"");
+    assert!(err(&bad).contains("회전 태그"));
+}

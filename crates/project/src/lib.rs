@@ -562,6 +562,9 @@ pub struct GraphicWidgetSpec {
     /// 가시성 조건 태그 이름(선택). 있으면 값이 참일 때만 보인다.
     #[serde(default)]
     pub visible_tag: Option<String>,
+    /// 회전 각도 태그 이름(선택). 숫자면 도 단위, 참이면 90도다.
+    #[serde(default)]
+    pub rotate_tag: Option<String>,
     /// X 좌표.
     pub x: f64,
     /// Y 좌표.
@@ -629,6 +632,25 @@ fn check_finite(label: &str, v: f64) -> Result<f64, ConfigError> {
     } else {
         invalid(format!("{label}: 유한한 숫자여야 한다"))
     }
+}
+/// 위젯의 태그 참조를 검증한다. 빈 문자열은 `None`으로 비우고 없는 태그는 거부한다.
+fn check_tag_ref(
+    wl: &str,
+    tag_names: &std::collections::HashSet<String>,
+    value: Option<String>,
+    label: &str,
+) -> Result<Option<String>, ConfigError> {
+    let Some(name) = value else {
+        return Ok(None);
+    };
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if !tag_names.contains(trimmed) {
+        return invalid(format!("{wl}: 없는 {label} `{trimmed}`"));
+    }
+    Ok(Some(trimmed.to_string()))
 }
 
 fn toml_str(s: &str) -> String {
@@ -1019,26 +1041,9 @@ impl Project {
                 if matches!(w.kind.as_str(), "gauge" | "tank") && w.max <= w.min {
                     return invalid(format!("{wl}: max는 min보다 커야 한다"));
                 }
-                if let Some(tag_name) = &w.tag {
-                    let trimmed = tag_name.trim();
-                    if trimmed.is_empty() {
-                        w.tag = None;
-                    } else if !tag_names.contains(trimmed) {
-                        return invalid(format!("{wl}: 없는 태그 `{trimmed}`"));
-                    } else {
-                        w.tag = Some(trimmed.to_string());
-                    }
-                }
-                if let Some(tag_name) = &w.visible_tag {
-                    let trimmed = tag_name.trim();
-                    if trimmed.is_empty() {
-                        w.visible_tag = None;
-                    } else if !tag_names.contains(trimmed) {
-                        return invalid(format!("{wl}: 없는 가시성 태그 `{trimmed}`"));
-                    } else {
-                        w.visible_tag = Some(trimmed.to_string());
-                    }
-                }
+                w.tag = check_tag_ref(&wl, &tag_names, w.tag.take(), "태그")?;
+                w.visible_tag = check_tag_ref(&wl, &tag_names, w.visible_tag.take(), "가시성 태그")?;
+                w.rotate_tag = check_tag_ref(&wl, &tag_names, w.rotate_tag.take(), "회전 태그")?;
             }
             screens.push(s);
         }
@@ -1290,6 +1295,9 @@ impl Project {
                 }
                 if let Some(tag) = &w.visible_tag {
                     out.push_str(&format!("visible_tag = {}\n", toml_str(tag)));
+                }
+                if let Some(tag) = &w.rotate_tag {
+                    out.push_str(&format!("rotate_tag = {}\n", toml_str(tag)));
                 }
                 out.push_str(&format!("x = {}\n", toml_f64(w.x)));
                 out.push_str(&format!("y = {}\n", toml_f64(w.y)));

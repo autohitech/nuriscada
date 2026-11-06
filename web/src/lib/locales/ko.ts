@@ -296,6 +296,7 @@ export const ko = {
   displayName: "표시 이름",
   linkedTag: "연결 태그",
   visibilityTag: "가시성 조건 태그",
+  rotateTag: "회전 각도 태그",
   notLinked: "(연결 안 함)",
   xCoord: "X 좌표",
   yCoord: "Y 좌표",
