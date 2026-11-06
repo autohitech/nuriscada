@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright NuriScada contributors
 # 사용: scripts/visual.sh [--update | --review]
+#   (인자 없음: OS별 기준 스냅샷과 견준다. CI도 이 모드로 돈다.)
 #   --update: 기준 스냅샷을 갱신한다(로컬에서 눈으로 확인한 뒤에만 커밋한다).
-#   --review: 스냅샷을 항상 새로 쓰고 통과시킨다(CI에서 촬영본을 아티팩트로 남길 때 쓴다).
+#   --review: 스냅샷을 항상 새로 쓰고 통과시킨다(촬영본만 모을 때 쓴다).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

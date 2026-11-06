@@ -118,8 +118,8 @@ jobs:
         run: npx --prefix web playwright install chromium firefox webkit --only-shell
       - name: 브라우저 OS 의존성 설치
         run: sudo npx --prefix web playwright install-deps chromium firefox webkit
-      - name: 촬영 후 검토용으로 보관
-        run: bash scripts/visual.sh --review
+      - name: 기준 스냅샷과 비교
+        run: bash scripts/visual.sh
       - name: 촬영본 보관
         if: always()
         uses: actions/upload-artifact@v4
